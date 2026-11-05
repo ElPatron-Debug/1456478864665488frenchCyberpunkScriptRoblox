@@ -1,0 +1,473 @@
+local ok, err = pcall(function()
+	local Players = game:GetService("Players")
+	local UIS = game:GetService("UserInputService")
+	local Lighting = game:GetService("Lighting")
+	local TweenService = game:GetService("TweenService")
+	local TextChatService = game:GetService("TextChatService")
+	local ReplicatedStorage = game:GetService("ReplicatedStorage")
+	local Debris = game:GetService("Debris")
+
+	if _G.QuickhackCleanup then pcall(_G.QuickhackCleanup) end
+
+	local player = Players.LocalPlayer
+	local connections = {}
+	local toggleKey = Enum.KeyCode.H
+
+	local selectedCategory, selectedItem, selectedTarget
+	local busy, rpEnabled = false, true
+
+	local GREEN = Color3.fromRGB(0, 255, 120)
+	local RED = Color3.fromRGB(255, 40, 60)
+	local YELLOW = Color3.fromRGB(255, 238, 0)
+	local DARK = Color3.fromRGB(8, 12, 10)
+	local PANEL = Color3.fromRGB(18, 26, 22)
+	local SEL = Color3.fromRGB(0, 120, 60)
+
+	----------------------------------------------------------------
+	-- CE QU'ON PEUT HACKER (modifie les listes comme tu veux)
+	----------------------------------------------------------------
+	local CATEGORIES = { "Objet", "Véhicule", "Téléphone", "Ordi", "Autre" }
+	local ITEMS = {
+		["Objet"] = { "Lampe", "Porte", "Caméra", "Distributeur", "Radio", "Ascenseur" },
+		["Véhicule"] = { "Moteur", "Freins", "GPS", "Portières", "Klaxon", "Phares" },
+		["Téléphone"] = { "Appels", "Messages", "Caméra", "Localisation", "Contacts", "Micro" },
+		["Ordi"] = { "Fichiers", "Webcam", "Mots de passe", "Pare-feu", "Écran", "Disque dur" },
+	}
+
+	-- {t} = pseudo de la cible, {i} = ce qu'on hack (en minuscules)
+	local RP = {
+		["Objet"] = {
+			"*sort son terminal et scanne {i} près de {t}*",
+			"*pianote rapidement, {i} de {t} se met à grésiller*",
+			"*{i} de {t} est sous son contrôle*",
+		},
+		["Véhicule"] = {
+			"*connecte son terminal au véhicule de {t}*",
+			"*contourne l'antivol, {i} du véhicule de {t} réagit bizarrement*",
+			"*{i} du véhicule de {t} lui obéit*",
+		},
+		["Téléphone"] = {
+			"*sort son terminal et cherche le signal du téléphone de {t}*",
+			"*injecte un virus, {i} du téléphone de {t} se met à bugger*",
+			"*{i} du téléphone de {t} est piraté*",
+		},
+		["Ordi"] = {
+			"*se branche discrètement sur l'ordinateur de {t}*",
+			"*casse le pare-feu, des lignes de code défilent vers {i}*",
+			"*{i} de l'ordinateur de {t} n'a plus de secret*",
+		},
+		["Autre"] = {
+			"*sort son terminal et cible {i} de {t}*",
+			"*pianote frénétiquement, {i} de {t} dysfonctionne*",
+			"*{i} de {t} est piraté*",
+		},
+	}
+
+	local function fill(s, target, item)
+		s = s:gsub("{t}", target)
+		s = s:gsub("{i}", item:lower())
+		return s
+	end
+
+	----------------------------------------------------------------
+	-- INTERFACE
+	----------------------------------------------------------------
+	local pg = player:FindFirstChildOfClass("PlayerGui") or player:WaitForChild("PlayerGui", 5)
+	local gui = Instance.new("ScreenGui")
+	gui.Name = "QuickhackUI"
+	gui.ResetOnSpawn = false
+	gui.DisplayOrder = 1000
+	gui.IgnoreGuiInset = true
+	gui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
+	gui.Parent = pg
+
+	local frame = Instance.new("Frame")
+	frame.Size = UDim2.fromOffset(320, 545)
+	frame.Position = UDim2.new(1, -340, 0, 50)
+	frame.BackgroundColor3 = DARK
+	frame.BorderSizePixel = 0
+	frame.Active = true
+	frame.Draggable = true
+	frame.Parent = gui
+	local fs = Instance.new("UIStroke", frame)
+	fs.Color = GREEN
+	fs.Thickness = 2
+
+	local function mkLabel(parent, text, x, y, w, h, color, size)
+		local l = Instance.new("TextLabel")
+		l.Size = UDim2.fromOffset(w, h)
+		l.Position = UDim2.fromOffset(x, y)
+		l.BackgroundTransparency = 1
+		l.Text = text
+		l.TextColor3 = color
+		l.Font = Enum.Font.Code
+		l.TextSize = size
+		l.TextXAlignment = Enum.TextXAlignment.Left
+		l.Parent = parent
+		return l
+	end
+
+	local function mkButton(parent, text, x, y, w, h)
+		local b = Instance.new("TextButton")
+		b.Size = UDim2.fromOffset(w, h)
+		b.Position = UDim2.fromOffset(x, y)
+		b.BackgroundColor3 = PANEL
+		b.BorderSizePixel = 0
+		b.Text = text
+		b.TextColor3 = Color3.new(1, 1, 1)
+		b.Font = Enum.Font.Code
+		b.TextSize = 14
+		b.Parent = parent
+		return b
+	end
+
+	mkLabel(frame, "> QUICKHACK_", 10, 8, 200, 22, GREEN, 18)
+	local statusLbl = mkLabel(frame, "En attente...", 10, 518, 300, 20, RED, 13)
+
+	local toggle = mkButton(gui, "HK", 0, 0, 44, 44)
+	toggle.Position = UDim2.new(1, -54, 0, 4)
+	toggle.TextColor3 = GREEN
+	toggle.TextSize = 16
+	local ts = Instance.new("UIStroke", toggle)
+	ts.Color = GREEN
+	ts.Thickness = 2
+
+	local function setOpen(o) frame.Visible = o end
+	table.insert(connections, toggle.MouseButton1Click:Connect(function() setOpen(not frame.Visible) end))
+
+	local closeBtn = mkButton(frame, "X", 286, 6, 26, 24)
+	closeBtn.TextColor3 = RED
+	table.insert(connections, closeBtn.MouseButton1Click:Connect(function() setOpen(false) end))
+
+	-- 1) TYPE
+	mkLabel(frame, "[ 1. TYPE ]", 10, 38, 200, 18, GREEN, 13)
+	local catButtons = {}
+	local itemList, customBox, itemButtons
+	local rebuildItems
+
+	local function refreshCats()
+		for name, b in pairs(catButtons) do
+			b.BackgroundColor3 = (name == selectedCategory) and SEL or PANEL
+		end
+	end
+
+	for i, name in ipairs(CATEGORIES) do
+		local col = (i - 1) % 3
+		local row = math.floor((i - 1) / 3)
+		local b = mkButton(frame, name, 10 + col * 102, 60 + row * 34, 96, 28)
+		catButtons[name] = b
+		table.insert(connections, b.MouseButton1Click:Connect(function()
+			selectedCategory = name
+			selectedItem = nil
+			refreshCats()
+			rebuildItems()
+		end))
+	end
+
+	-- 2) QUOI HACKER
+	mkLabel(frame, "[ 2. QUOI HACKER ]", 10, 132, 250, 18, GREEN, 13)
+
+	itemList = Instance.new("ScrollingFrame")
+	itemList.Size = UDim2.fromOffset(300, 100)
+	itemList.Position = UDim2.fromOffset(10, 154)
+	itemList.BackgroundColor3 = Color3.fromRGB(12, 18, 15)
+	itemList.BorderSizePixel = 0
+	itemList.ScrollBarThickness = 4
+	itemList.AutomaticCanvasSize = Enum.AutomaticSize.Y
+	itemList.CanvasSize = UDim2.new()
+	itemList.Parent = frame
+	local il = Instance.new("UIGrid" .. "Layout", itemList)
+	il.CellSize = UDim2.fromOffset(94, 26)
+	il.CellPadding = UDim2.fromOffset(4, 4)
+
+	customBox = Instance.new("TextBox")
+	customBox.Size = UDim2.fromOffset(300, 30)
+	customBox.Position = UDim2.fromOffset(10, 154)
+	customBox.BackgroundColor3 = PANEL
+	customBox.BorderSizePixel = 0
+	customBox.PlaceholderText = "écris ce que tu veux hacker..."
+	customBox.PlaceholderColor3 = Color3.fromRGB(120, 140, 125)
+	customBox.Text = ""
+	customBox.TextColor3 = Color3.new(1, 1, 1)
+	customBox.Font = Enum.Font.Code
+	customBox.TextSize = 13
+	customBox.ClearTextOnFocus = false
+	customBox.Visible = false
+	customBox.Parent = frame
+
+	itemButtons = {}
+	rebuildItems = function()
+		for _, b in pairs(itemButtons) do b:Destroy() end
+		table.clear(itemButtons)
+		if selectedCategory == "Autre" then
+			itemList.Visible = false
+			customBox.Visible = true
+			return
+		end
+		customBox.Visible = false
+		itemList.Visible = true
+		for _, it in ipairs(ITEMS[selectedCategory] or {}) do
+			local b = Instance.new("TextButton")
+			b.BackgroundColor3 = PANEL
+			b.BorderSizePixel = 0
+			b.Text = it
+			b.TextColor3 = Color3.new(1, 1, 1)
+			b.Font = Enum.Font.Code
+			b.TextSize = 12
+			b.Parent = itemList
+			itemButtons[it] = b
+			table.insert(connections, b.MouseButton1Click:Connect(function()
+				selectedItem = it
+				for n, bb in pairs(itemButtons) do
+					bb.BackgroundColor3 = (n == it) and SEL or PANEL
+				end
+			end))
+		end
+	end
+	itemList.Visible = false
+
+	-- 3) CIBLE
+	mkLabel(frame, "[ 3. CIBLE ]", 10, 262, 200, 18, GREEN, 13)
+	local list = Instance.new("ScrollingFrame")
+	list.Size = UDim2.fromOffset(300, 130)
+	list.Position = UDim2.fromOffset(10, 284)
+	list.BackgroundColor3 = Color3.fromRGB(12, 18, 15)
+	list.BorderSizePixel = 0
+	list.ScrollBarThickness = 4
+	list.AutomaticCanvasSize = Enum.AutomaticSize.Y
+	list.CanvasSize = UDim2.new()
+	list.Parent = frame
+	Instance.new("UIListLayout", list).Padding = UDim.new(0, 3)
+
+	local playerButtons = {}
+	local function refreshTargets()
+		for plr, b in pairs(playerButtons) do
+			b.BackgroundColor3 = (plr == selectedTarget) and Color3.fromRGB(150, 20, 35) or PANEL
+		end
+	end
+	local function addPlayer(plr)
+		if playerButtons[plr] then return end
+		local b = Instance.new("TextButton")
+		b.Size = UDim2.new(1, -8, 0, 26)
+		b.BackgroundColor3 = PANEL
+		b.BorderSizePixel = 0
+		b.Text = " " .. plr.Name .. (plr == player and "  (toi)" or "")
+		b.TextXAlignment = Enum.TextXAlignment.Left
+		b.TextColor3 = Color3.new(1, 1, 1)
+		b.Font = Enum.Font.Code
+		b.TextSize = 13
+		b.Parent = list
+		playerButtons[plr] = b
+		table.insert(connections, b.MouseButton1Click:Connect(function()
+			selectedTarget = plr
+			refreshTargets()
+		end))
+	end
+	local function removePlayer(plr)
+		if playerButtons[plr] then playerButtons[plr]:Destroy() playerButtons[plr] = nil end
+		if selectedTarget == plr then selectedTarget = nil end
+	end
+	for _, p in ipairs(Players:GetPlayers()) do addPlayer(p) end
+	table.insert(connections, Players.PlayerAdded:Connect(addPlayer))
+	table.insert(connections, Players.PlayerRemoving:Connect(removePlayer))
+
+	local rpBtn = mkButton(frame, "RP TCHAT : ON", 10, 424, 300, 28)
+	rpBtn.TextColor3 = GREEN
+	table.insert(connections, rpBtn.MouseButton1Click:Connect(function()
+		rpEnabled = not rpEnabled
+		rpBtn.Text = "RP TCHAT : " .. (rpEnabled and "ON" or "OFF")
+		rpBtn.TextColor3 = rpEnabled and GREEN or RED
+	end))
+
+	local launch = mkButton(frame, "[ LANCER LE HACK ]", 10, 462, 300, 40)
+	launch.BackgroundColor3 = Color3.fromRGB(0, 140, 70)
+	launch.TextSize = 15
+
+	----------------------------------------------------------------
+	-- TCHAT (vrai message du perso, visible par tous)
+	----------------------------------------------------------------
+	local function chatSay(msg)
+		local sent = pcall(function()
+			if TextChatService.ChatVersion == Enum.ChatVersion.TextChatService then
+				local channels = TextChatService:WaitForChild("TextChannels", 3)
+				local ch = channels:FindFirstChild("RBXGeneral") or channels:FindFirstChildWhichIsA("TextChannel")
+				ch:SendAsync(msg)
+			else
+				ReplicatedStorage.DefaultChatSystemChatEvents.SayMessageRequest:FireServer(msg, "All")
+			end
+		end)
+		if not sent then warn("[Quickhack] Envoi tchat impossible") end
+	end
+
+	----------------------------------------------------------------
+	-- CHARGEMENT
+	----------------------------------------------------------------
+	local SEGMENTS = 24
+	local loader = Instance.new("Frame")
+	loader.Size = UDim2.fromOffset(460, 110)
+	loader.Position = UDim2.new(0.5, -230, 0.72, 0)
+	loader.BackgroundColor3 = Color3.fromRGB(3, 6, 4)
+	loader.BackgroundTransparency = 0.15
+	loader.BorderSizePixel = 0
+	loader.Visible = false
+	loader.Parent = gui
+	local lstroke = Instance.new("UIStroke", loader)
+	lstroke.Color = GREEN
+	lstroke.Thickness = 2
+
+	local loadTitle = mkLabel(loader, "PIRATAGE", 14, 8, 430, 22, GREEN, 17)
+	local loadPhase = mkLabel(loader, "", 14, 34, 430, 18, YELLOW, 13)
+	local loadPct = mkLabel(loader, "0%", 14, 82, 200, 20, Color3.new(1, 1, 1), 14)
+	local loadNoise = mkLabel(loader, "", 200, 82, 250, 20, Color3.fromRGB(80, 120, 90), 13)
+	loadNoise.TextXAlignment = Enum.TextXAlignment.Right
+
+	local segs = {}
+	local segW = (432 - (SEGMENTS - 1) * 3) / SEGMENTS
+	for i = 1, SEGMENTS do
+		local s = Instance.new("Frame")
+		s.Size = UDim2.fromOffset(segW, 18)
+		s.Position = UDim2.fromOffset(14 + (i - 1) * (segW + 3), 58)
+		s.BackgroundColor3 = Color3.fromRGB(20, 35, 26)
+		s.BorderSizePixel = 0
+		s.Parent = loader
+		segs[i] = s
+	end
+
+	local GLITCH = { "▓", "▒", "░", "#", "@", "%", "$", "&", "/", "0", "1" }
+	local function glitchString(n)
+		local t = {}
+		for i = 1, n do t[i] = GLITCH[math.random(#GLITCH)] end
+		return table.concat(t)
+	end
+
+	local function setProgress(pct)
+		local filled = math.floor(pct / 100 * SEGMENTS)
+		for i, s in ipairs(segs) do
+			if i <= filled then
+				local k = i / SEGMENTS
+				s.BackgroundColor3 = (k < 0.6) and GREEN or ((k < 0.85) and YELLOW or RED)
+			else
+				s.BackgroundColor3 = Color3.fromRGB(20, 35, 26)
+			end
+		end
+		loadPct.Text = math.floor(pct) .. "%"
+		loadNoise.Text = glitchString(14)
+	end
+
+	local function screenFlash(strong)
+		local cc = Instance.new("ColorCorrectionEffect")
+		cc.TintColor = Color3.fromRGB(120, 255, 170)
+		cc.Contrast = strong and 0.35 or 0.15
+		cc.Parent = Lighting
+		local blur = Instance.new("BlurEffect")
+		blur.Size = strong and 12 or 5
+		blur.Parent = Lighting
+		TweenService:Create(cc, TweenInfo.new(0.5), {TintColor = Color3.new(1, 1, 1), Contrast = 0}):Play()
+		TweenService:Create(blur, TweenInfo.new(0.5), {Size = 0}):Play()
+		Debris:AddItem(cc, 0.7)
+		Debris:AddItem(blur, 0.7)
+	end
+
+	local PHASES = {
+		{ name = "Connexion au réseau", from = 0, to = 22, time = 1.6 },
+		{ name = "Contournement du pare-feu", from = 22, to = 55, time = 2.2 },
+		{ name = "Injection du code", from = 55, to = 88, time = 2.2 },
+		{ name = "Prise de contrôle", from = 88, to = 100, time = 1.2 },
+	}
+
+	----------------------------------------------------------------
+	-- HACK
+	----------------------------------------------------------------
+	local function runHack()
+		if busy then return end
+		if not selectedCategory then statusLbl.Text = "Choisis un type !" return end
+
+		local item = selectedItem
+		if selectedCategory == "Autre" then
+			local txt = customBox.Text:gsub("[<>]", "")
+			item = (txt ~= "") and txt or nil
+		end
+		if not item then statusLbl.Text = "Choisis quoi hacker !" return end
+		if not selectedTarget then statusLbl.Text = "Choisis un joueur !" return end
+
+		local name = selectedTarget.Name
+		local lines = RP[selectedCategory]
+
+		busy = true
+		launch.Text = "[ HACK EN COURS... ]"
+		launch.BackgroundColor3 = Color3.fromRGB(70, 70, 70)
+		statusLbl.Text = "Hack en cours..."
+		loadTitle.Text = ("PIRATAGE : %s (%s) > %s"):format(item:upper(), selectedCategory:upper(), name)
+		setProgress(0)
+		loader.Visible = true
+		task.spawn(screenFlash, false)
+
+		local function rp(i)
+			if rpEnabled then chatSay(fill(lines[i], name, item)) end
+		end
+
+		for idx, ph in ipairs(PHASES) do
+			loadPhase.Text = "> " .. ph.name .. "..."
+			if idx == 1 then task.spawn(rp, 1) end
+			if idx == 3 then task.spawn(rp, 2) end
+			local t0 = os.clock()
+			while true do
+				local a = math.clamp((os.clock() - t0) / ph.time, 0, 1)
+				setProgress(ph.from + (ph.to - ph.from) * (a * a * (3 - 2 * a)))
+				if math.random() < 0.12 then
+					loadPhase.Text = "> " .. glitchString(#ph.name)
+					task.wait(0.03)
+					loadPhase.Text = "> " .. ph.name .. "..."
+				end
+				if a >= 1 then break end
+				task.wait(0.04)
+			end
+		end
+
+		setProgress(100)
+		loadPhase.Text = "> ACCÈS ACCORDÉ"
+		loadPhase.TextColor3 = GREEN
+		task.spawn(screenFlash, true)
+		task.spawn(rp, 3)
+		task.wait(1.4)
+		loader.Visible = false
+		loadPhase.TextColor3 = YELLOW
+
+		statusLbl.Text = item .. " → " .. name .. " ✔"
+		launch.Text = "[ LANCER LE HACK ]"
+		launch.BackgroundColor3 = Color3.fromRGB(0, 140, 70)
+		busy = false
+	end
+
+	table.insert(connections, launch.MouseButton1Click:Connect(function() task.spawn(runHack) end))
+
+	table.insert(connections, UIS.InputBegan:Connect(function(input)
+		if input.UserInputType ~= Enum.UserInputType.Keyboard then return end
+		if input.KeyCode == toggleKey and not UIS:GetFocusedTextBox() then
+			setOpen(not frame.Visible)
+		end
+	end))
+
+	_G.QuickhackCleanup = function()
+		for _, c in ipairs(connections) do c:Disconnect() end
+		if gui then gui:Destroy() end
+	end
+
+	print("[Quickhack] chargé, appuie sur H ou sur HK")
+end)
+
+if not ok then
+	warn("[Quickhack] ERREUR : " .. tostring(err))
+	local pg = game.Players.LocalPlayer:FindFirstChildOfClass("PlayerGui")
+	if pg then
+		local g = Instance.new("ScreenGui", pg)
+		g.DisplayOrder = 9999
+		local l = Instance.new("TextLabel", g)
+		l.Size = UDim2.fromOffset(600, 80)
+		l.Position = UDim2.new(0.5, -300, 0, 20)
+		l.BackgroundColor3 = Color3.new(0, 0, 0)
+		l.TextColor3 = Color3.fromRGB(255, 60, 60)
+		l.TextWrapped = true
+		l.Text = "ERREUR : " .. tostring(err)
+	end
+end
