@@ -1,0 +1,450 @@
+local Players = game:GetService("Players")
+local UIS = game:GetService("UserInputService")
+local Lighting = game:GetService("Lighting")
+local TweenService = game:GetService("TweenService")
+local Debris = game:GetService("Debris")
+
+if _G.SandevistanCleanup then
+	pcall(_G.SandevistanCleanup)
+end
+
+local player = Players.LocalPlayer
+local connections = {}
+local scanObjects = {}
+local gui
+
+----------------------------------------------------------------
+-- CONFIG (modifiable depuis le menu)
+----------------------------------------------------------------
+local cfg = {
+	DURATION = 10,
+	COOLDOWN = 5,
+	GHOST_RATE = 0.08,
+	SPEED_MULT = 4,
+	COLOR_MODE = "rainbow",   -- "rainbow" ou "palette"
+	COLOR_SPEED = 1.2,
+	SCREEN_TINT = true,
+	SCAN_RADIUS = 100,
+	SCAN_DURATION = 6,
+	SCAN_COOLDOWN = 3,
+}
+
+local keys = {
+	activate = Enum.KeyCode.Q,
+	menu = Enum.KeyCode.M,
+	scan = Enum.KeyCode.U,
+}
+
+local PALETTE = {
+	Color3.fromRGB(0, 255, 255),
+	Color3.fromRGB(255, 0, 200),
+	Color3.fromRGB(255, 240, 0),
+	Color3.fromRGB(0, 255, 100),
+	Color3.fromRGB(255, 120, 0),
+	Color3.fromRGB(160, 60, 255),
+	Color3.fromRGB(255, 40, 60),
+}
+
+local active, onCooldown = false, false
+local scanning, scanOnCooldown = false, false
+local waitingFor, waitingButton = nil, nil
+
+----------------------------------------------------------------
+-- MENU
+----------------------------------------------------------------
+gui = Instance.new("ScreenGui")
+gui.Name = "SandevistanMenu"
+gui.ResetOnSpawn = false
+gui.Enabled = true
+gui.DisplayOrder = 999
+gui.IgnoreGuiInset = true
+gui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
+gui.Parent = player:WaitForChild("PlayerGui")
+
+local frame = Instance.new("Frame")
+frame.Size = UDim2.fromOffset(340, 440)
+frame.Position = UDim2.new(0.5, -170, 0.5, -220)
+frame.BackgroundColor3 = Color3.fromRGB(15, 15, 25)
+frame.BorderSizePixel = 0
+frame.Active = true
+frame.Draggable = true
+frame.Visible = true
+frame.Parent = gui
+Instance.new("UICorner", frame).CornerRadius = UDim.new(0, 10)
+
+local stroke = Instance.new("UIStroke", frame)
+stroke.Thickness = 2
+stroke.Color = Color3.new(1, 1, 1)
+local grad = Instance.new("UIGradient", stroke)
+grad.Color = ColorSequence.new({
+	ColorSequenceKeypoint.new(0, Color3.fromRGB(0, 255, 255)),
+	ColorSequenceKeypoint.new(0.5, Color3.fromRGB(255, 0, 200)),
+	ColorSequenceKeypoint.new(1, Color3.fromRGB(255, 240, 0)),
+})
+
+-- Bouton toujours visible pour ouvrir/fermer le menu
+local toggle = Instance.new("TextButton")
+toggle.Size = UDim2.fromOffset(44, 44)
+toggle.Position = UDim2.new(0, 10, 0.5, -22)
+toggle.BackgroundColor3 = Color3.fromRGB(15, 15, 25)
+toggle.Text = "SV"
+toggle.TextColor3 = Color3.fromRGB(0, 255, 255)
+toggle.Font = Enum.Font.GothamBold
+toggle.TextSize = 16
+toggle.Parent = gui
+Instance.new("UICorner", toggle).CornerRadius = UDim.new(0, 8)
+local ts = Instance.new("UIStroke", toggle)
+ts.Color = Color3.fromRGB(255, 0, 200)
+ts.Thickness = 2
+table.insert(connections, toggle.MouseButton1Click:Connect(function()
+	frame.Visible = not frame.Visible
+end))
+
+local title = Instance.new("TextLabel")
+title.Size = UDim2.new(1, 0, 0, 36)
+title.BackgroundTransparency = 1
+title.Text = "SANDEVISTAN CONFIG"
+title.TextColor3 = Color3.fromRGB(0, 255, 255)
+title.Font = Enum.Font.GothamBold
+title.TextSize = 18
+title.Parent = frame
+
+local status = Instance.new("TextLabel")
+status.Size = UDim2.new(1, -20, 0, 22)
+status.Position = UDim2.new(0, 10, 1, -28)
+status.BackgroundTransparency = 1
+status.Text = "Prêt"
+status.TextColor3 = Color3.fromRGB(255, 240, 0)
+status.Font = Enum.Font.GothamBold
+status.TextSize = 14
+status.Parent = frame
+
+local list = Instance.new("ScrollingFrame")
+list.Size = UDim2.new(1, -20, 1, -74)
+list.Position = UDim2.fromOffset(10, 38)
+list.BackgroundTransparency = 1
+list.BorderSizePixel = 0
+list.ScrollBarThickness = 4
+list.AutomaticCanvasSize = Enum.AutomaticSize.Y
+list.CanvasSize = UDim2.new()
+list.Parent = frame
+local layout = Instance.new("UIListLayout", list)
+layout.Padding = UDim.new(0, 6)
+
+local function makeSection(text)
+	local l = Instance.new("TextLabel")
+	l.Size = UDim2.new(1, -6, 0, 22)
+	l.BackgroundTransparency = 1
+	l.Text = "— " .. text .. " —"
+	l.TextColor3 = Color3.fromRGB(255, 0, 200)
+	l.Font = Enum.Font.GothamBold
+	l.TextSize = 13
+	l.Parent = list
+end
+
+local function makeRow(text)
+	local row = Instance.new("Frame")
+	row.Size = UDim2.new(1, -6, 0, 32)
+	row.BackgroundTransparency = 1
+	row.Parent = list
+	local l = Instance.new("TextLabel")
+	l.Size = UDim2.new(0.55, 0, 1, 0)
+	l.BackgroundTransparency = 1
+	l.Text = text
+	l.TextXAlignment = Enum.TextXAlignment.Left
+	l.TextColor3 = Color3.new(1, 1, 1)
+	l.Font = Enum.Font.Gotham
+	l.TextSize = 14
+	l.Parent = row
+	return row
+end
+
+local function styleControl(c, row)
+	c.Size = UDim2.new(0.43, 0, 1, 0)
+	c.Position = UDim2.new(0.57, 0, 0, 0)
+	c.BackgroundColor3 = Color3.fromRGB(30, 30, 50)
+	c.TextColor3 = Color3.new(1, 1, 1)
+	c.Font = Enum.Font.GothamBold
+	c.TextSize = 14
+	c.Parent = row
+	Instance.new("UICorner", c).CornerRadius = UDim.new(0, 6)
+end
+
+local function addNumber(label, key, minV, maxV)
+	local row = makeRow(label)
+	local box = Instance.new("TextBox")
+	box.Text = tostring(cfg[key])
+	box.ClearTextOnFocus = false
+	styleControl(box, row)
+	table.insert(connections, box.FocusLost:Connect(function()
+		local n = tonumber(box.Text)
+		if n then cfg[key] = math.clamp(n, minV, maxV) end
+		box.Text = tostring(cfg[key])
+	end))
+end
+
+local function addKeybind(label, key)
+	local row = makeRow(label)
+	local btn = Instance.new("TextButton")
+	btn.Text = keys[key].Name
+	styleControl(btn, row)
+	table.insert(connections, btn.MouseButton1Click:Connect(function()
+		waitingFor, waitingButton = key, btn
+		btn.Text = "Appuie..."
+	end))
+end
+
+local function addToggle(label, getText, onClick)
+	local row = makeRow(label)
+	local btn = Instance.new("TextButton")
+	btn.Text = getText()
+	styleControl(btn, row)
+	table.insert(connections, btn.MouseButton1Click:Connect(function()
+		onClick()
+		btn.Text = getText()
+	end))
+end
+
+makeSection("TOUCHES")
+addKeybind("Sandevistan", "activate")
+addKeybind("Scan joueurs", "scan")
+addKeybind("Ouvrir le menu", "menu")
+
+makeSection("SANDEVISTAN")
+addNumber("Durée (s)", "DURATION", 1, 60)
+addNumber("Recharge (s)", "COOLDOWN", 0, 60)
+addNumber("Vitesse (x)", "SPEED_MULT", 0.5, 5)
+addNumber("Intervalle fantômes", "GHOST_RATE", 0.03, 0.5)
+addNumber("Vitesse couleurs", "COLOR_SPEED", 0.1, 10)
+addToggle("Mode couleur", function() return cfg.COLOR_MODE end, function()
+	cfg.COLOR_MODE = (cfg.COLOR_MODE == "rainbow") and "palette" or "rainbow"
+end)
+addToggle("Teinte écran", function() return cfg.SCREEN_TINT and "ON" or "OFF" end, function()
+	cfg.SCREEN_TINT = not cfg.SCREEN_TINT
+end)
+
+makeSection("SCAN")
+addNumber("Rayon (studs)", "SCAN_RADIUS", 10, 1000)
+addNumber("Durée (s)", "SCAN_DURATION", 1, 30)
+addNumber("Recharge (s)", "SCAN_COOLDOWN", 0, 60)
+
+----------------------------------------------------------------
+-- COULEURS
+----------------------------------------------------------------
+local function getColor(t, offset)
+	if cfg.COLOR_MODE == "palette" then
+		local i = (math.floor(t * cfg.COLOR_SPEED * 3 + offset * #PALETTE) % #PALETTE) + 1
+		return PALETTE[i]
+	end
+	return Color3.fromHSV((t * cfg.COLOR_SPEED * 0.5 + offset) % 1, 0.9, 1)
+end
+
+----------------------------------------------------------------
+-- EFFET SANDEVISTAN
+----------------------------------------------------------------
+local function spawnGhost(character, t)
+	local root = character:FindFirstChild("HumanoidRootPart")
+	local rootY = root and root.Position.Y or 0
+
+	for _, part in ipairs(character:GetDescendants()) do
+		if part:IsA("BasePart") and part.Name ~= "HumanoidRootPart" and part.Transparency < 1 then
+			local ok, ghost = pcall(function() return part:Clone() end)
+			if ok and ghost then
+				ghost:ClearAllChildren()
+				ghost.Anchored = true
+				ghost.CanCollide = false
+				ghost.CanQuery = false
+				ghost.CanTouch = false
+				ghost.Massless = true
+				ghost.Material = Enum.Material.Neon
+				local offset = ((part.Position.Y - rootY) * 0.08) % 1
+				ghost.Color = getColor(t, offset)
+				ghost.Transparency = 0.35
+				ghost.CFrame = part.CFrame
+				ghost.Parent = workspace
+				TweenService:Create(ghost, TweenInfo.new(0.45), {Transparency = 1}):Play()
+				Debris:AddItem(ghost, 0.55)
+			end
+		end
+	end
+end
+
+local function startSandevistan()
+	if active or onCooldown then return end
+	local character = player.Character
+	local humanoid = character and character:FindFirstChildOfClass("Humanoid")
+	local camera = workspace.CurrentCamera
+	if not humanoid or not camera then return end
+
+	active = true
+	status.Text = "SANDEVISTAN ACTIF !"
+
+	local cc = Instance.new("ColorCorrectionEffect")
+	cc.Parent = Lighting
+	TweenService:Create(cc, TweenInfo.new(0.4), {Saturation = 0.3, Contrast = 0.2}):Play()
+
+	local blur = Instance.new("BlurEffect")
+	blur.Size = 0
+	blur.Parent = Lighting
+	TweenService:Create(blur, TweenInfo.new(0.4), {Size = 6}):Play()
+
+	local baseFov = camera.FieldOfView
+	TweenService:Create(camera, TweenInfo.new(0.4), {FieldOfView = baseFov + 20}):Play()
+
+	local baseSpeed = humanoid.WalkSpeed
+	humanoid.WalkSpeed = baseSpeed * cfg.SPEED_MULT
+
+	local startTime = os.clock()
+	while os.clock() - startTime < cfg.DURATION and active do
+		if not character.Parent or humanoid.Health <= 0 then break end
+		local t = os.clock() - startTime
+		spawnGhost(character, t)
+		if cfg.SCREEN_TINT then
+			cc.TintColor = Color3.new(1, 1, 1):Lerp(getColor(t, 0), 0.35)
+		end
+		task.wait(cfg.GHOST_RATE)
+	end
+
+	if humanoid and humanoid.Parent then humanoid.WalkSpeed = baseSpeed end
+	TweenService:Create(camera, TweenInfo.new(0.4), {FieldOfView = baseFov}):Play()
+	TweenService:Create(blur, TweenInfo.new(0.4), {Size = 0}):Play()
+	TweenService:Create(cc, TweenInfo.new(0.4), {
+		Saturation = 0, TintColor = Color3.new(1, 1, 1), Contrast = 0,
+	}):Play()
+	Debris:AddItem(blur, 0.5)
+	Debris:AddItem(cc, 0.5)
+
+	active = false
+	onCooldown = true
+	for i = cfg.COOLDOWN, 1, -1 do
+		status.Text = "Recharge : " .. i .. "s"
+		task.wait(1)
+	end
+	onCooldown = false
+	status.Text = "Prêt"
+end
+
+----------------------------------------------------------------
+-- SCAN : joueurs proches en rouge + pseudo
+----------------------------------------------------------------
+local function clearScan()
+	for _, o in ipairs(scanObjects) do
+		if o and o.Parent then o:Destroy() end
+	end
+	table.clear(scanObjects)
+end
+
+local function startScan()
+	if scanning or scanOnCooldown then return end
+	local character = player.Character
+	local myRoot = character and character:FindFirstChild("HumanoidRootPart")
+	if not myRoot then return end
+
+	scanning = true
+	local marks = {}
+
+	for _, plr in ipairs(Players:GetPlayers()) do
+		if plr ~= player and plr.Character then
+			local root = plr.Character:FindFirstChild("HumanoidRootPart")
+			local head = plr.Character:FindFirstChild("Head")
+			if root and head and (root.Position - myRoot.Position).Magnitude <= cfg.SCAN_RADIUS then
+				local hl = Instance.new("Highlight")
+				hl.FillColor = Color3.fromRGB(255, 0, 0)
+				hl.OutlineColor = Color3.fromRGB(255, 80, 80)
+				hl.FillTransparency = 0.45
+				hl.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
+				hl.Adornee = plr.Character
+				hl.Parent = plr.Character
+				table.insert(scanObjects, hl)
+
+				local bb = Instance.new("BillboardGui")
+				bb.Size = UDim2.fromOffset(180, 40)
+				bb.StudsOffset = Vector3.new(0, 3, 0)
+				bb.AlwaysOnTop = true
+				bb.Adornee = head
+				bb.Parent = head
+				table.insert(scanObjects, bb)
+
+				local lbl = Instance.new("TextLabel")
+				lbl.Size = UDim2.fromScale(1, 1)
+				lbl.BackgroundTransparency = 1
+				lbl.TextColor3 = Color3.fromRGB(255, 40, 40)
+				lbl.TextStrokeTransparency = 0
+				lbl.Font = Enum.Font.GothamBold
+				lbl.TextSize = 16
+				lbl.Text = plr.Name
+				lbl.Parent = bb
+
+				table.insert(marks, {plr = plr, root = root, label = lbl})
+			end
+		end
+	end
+
+	status.Text = (#marks == 0) and "Scan : personne à proximité" or ("SCAN : " .. #marks .. " cible(s)")
+
+	local cc = Instance.new("ColorCorrectionEffect")
+	cc.TintColor = Color3.fromRGB(255, 120, 120)
+	cc.Contrast = 0.25
+	cc.Parent = Lighting
+	TweenService:Create(cc, TweenInfo.new(0.8), {TintColor = Color3.new(1, 1, 1), Contrast = 0}):Play()
+	Debris:AddItem(cc, 1)
+
+	local startTime = os.clock()
+	while os.clock() - startTime < cfg.SCAN_DURATION and scanning do
+		for _, m in ipairs(marks) do
+			if m.root and m.root.Parent and myRoot.Parent then
+				local d = math.floor((m.root.Position - myRoot.Position).Magnitude)
+				m.label.Text = m.plr.Name .. " [" .. d .. "m]"
+			end
+		end
+		task.wait(0.1)
+	end
+
+	clearScan()
+	scanning = false
+	scanOnCooldown = true
+	task.wait(cfg.SCAN_COOLDOWN)
+	scanOnCooldown = false
+	if not active and not onCooldown then status.Text = "Prêt" end
+end
+
+----------------------------------------------------------------
+-- INPUTS
+----------------------------------------------------------------
+table.insert(connections, UIS.InputBegan:Connect(function(input, gameProcessed)
+	if input.UserInputType ~= Enum.UserInputType.Keyboard then return end
+
+	-- Changement de touche
+	if waitingFor then
+		if input.KeyCode ~= Enum.KeyCode.Escape then
+			keys[waitingFor] = input.KeyCode
+		end
+		waitingButton.Text = keys[waitingFor].Name
+		waitingFor, waitingButton = nil, nil
+		return
+	end
+
+	-- Touche menu : marche même si le panel a le focus (sauf si on tape dans un champ)
+	if input.KeyCode == keys.menu then
+		if not UIS:GetFocusedTextBox() then
+			frame.Visible = not frame.Visible
+		end
+		return
+	end
+
+	if gameProcessed then return end
+
+	if input.KeyCode == keys.activate then
+		task.spawn(startSandevistan)
+	elseif input.KeyCode == keys.scan then
+		task.spawn(startScan)
+	end
+end))
+
+_G.SandevistanCleanup = function()
+	active = false
+	scanning = false
+	for _, c in ipairs(connections) do c:Disconnect() end
+	clearScan()
+	if gui then gui:Destroy() end
+end
