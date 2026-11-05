@@ -1,0 +1,1141 @@
+local ok, err = pcall(function()
+	local Players = game:GetService("Players")
+	local UIS = game:GetService("UserInputService")
+	local Lighting = game:GetService("Lighting")
+	local TweenService = game:GetService("TweenService")
+	local TextChatService = game:GetService("TextChatService")
+	local ReplicatedStorage = game:GetService("ReplicatedStorage")
+	local Debris = game:GetService("Debris")
+
+	for _, n in ipairs({ "CyberCleanup", "SandevistanCleanup", "QuickhackCleanup" }) do
+		if _G[n] then pcall(_G[n]) end
+	end
+
+	local player = Players.LocalPlayer
+	local connections = {}
+	local scanObjects = {}
+
+	----------------------------------------------------------------
+	-- CONFIG
+	----------------------------------------------------------------
+	local cfg = {
+		DURATION = 10, COOLDOWN = 5, GHOST_RATE = 0.08, SPEED_MULT = 4,
+		COLOR_MODE = "rainbow", COLOR_SPEED = 1.2, SCREEN_TINT = true,
+		SCAN_RADIUS = 100, SCAN_DURATION = 6, SCAN_COOLDOWN = 3,
+		CRASH_RADIUS = 60, CRASH_DURATION = 6,
+	}
+	local keys = {
+		activate = Enum.KeyCode.Q,
+		scan = Enum.KeyCode.U,
+		menu = Enum.KeyCode.M,
+	}
+	local PALETTE = {
+		Color3.fromRGB(0, 255, 255), Color3.fromRGB(255, 0, 200), Color3.fromRGB(255, 240, 0),
+		Color3.fromRGB(0, 255, 100), Color3.fromRGB(255, 120, 0), Color3.fromRGB(160, 60, 255),
+		Color3.fromRGB(255, 40, 60),
+	}
+
+	local GREEN = Color3.fromRGB(0, 255, 120)
+	local RED = Color3.fromRGB(255, 40, 60)
+	local YELLOW = Color3.fromRGB(255, 238, 0)
+	local CYAN = Color3.fromRGB(0, 255, 255)
+	local MAGENTA = Color3.fromRGB(255, 0, 200)
+	local DARK = Color3.fromRGB(8, 12, 16)
+	local PANEL = Color3.fromRGB(20, 26, 34)
+	local SEL = Color3.fromRGB(0, 120, 60)
+
+	local active, onCooldown = false, false
+	local scanning, scanOnCooldown = false, false
+	local busy, rpEnabled = false, true
+	local waitingFor, waitingButton = nil, nil
+	local selectedCategory, selectedItem, selectedTarget
+
+	----------------------------------------------------------------
+	-- HACK : données
+	----------------------------------------------------------------
+	local CATEGORIES = { "Objet", "Véhicule", "Téléphone", "Ordi", "Autre" }
+	local ITEMS = {
+		["Objet"] = { "Lampe", "Porte", "Caméra", "Distributeur", "Radio", "Ascenseur" },
+		["Véhicule"] = { "Moteur", "Freins", "GPS", "Portières", "Klaxon", "Phares" },
+		["Téléphone"] = { "Appels", "Messages", "Caméra", "Localisation", "Contacts", "Micro" },
+		["Ordi"] = { "Fichiers", "Webcam", "Mots de passe", "Pare-feu", "Écran", "Disque dur" },
+	}
+	local RP = {
+		["Objet"] = {
+			"*sort son terminal et scanne {i} près de {t}*",
+			"*pianote rapidement, {i} de {t} se met à grésiller*",
+			"*{i} de {t} est sous son contrôle*",
+		},
+		["Véhicule"] = {
+			"*connecte son terminal au véhicule de {t}*",
+			"*contourne l'antivol, {i} du véhicule de {t} réagit bizarrement*",
+			"*{i} du véhicule de {t} lui obéit*",
+		},
+		["Téléphone"] = {
+			"*sort son terminal et cherche le signal du téléphone de {t}*",
+			"*injecte un virus, {i} du téléphone de {t} se met à bugger*",
+			"*{i} du téléphone de {t} est piraté*",
+		},
+		["Ordi"] = {
+			"*se branche discrètement sur l'ordinateur de {t}*",
+			"*casse le pare-feu, des lignes de code défilent vers {i}*",
+			"*{i} de l'ordinateur de {t} n'a plus de secret*",
+		},
+		["Autre"] = {
+			"*sort son terminal et cible {i} de {t}*",
+			"*pianote frénétiquement, {i} de {t} dysfonctionne*",
+			"*{i} de {t} est piraté*",
+		},
+	}
+	-- RP du crashout : {n} = nombre de cibles, {r} = rayon
+	local CRASH_RP = {
+		"*sort son terminal et règle la fréquence sur la zone*",
+		"*lance un crashout, une onde de piratage traverse la zone*",
+		"*{n} cerveau(x) grillé(s) dans un rayon de {r}m, tout le monde est en surcharge*",
+	}
+	local function fill(s, target, item)
+		s = s:gsub("{t}", target)
+		s = s:gsub("{i}", item:lower())
+		return s
+	end
+
+	----------------------------------------------------------------
+	-- INTERFACE DE BASE
+	----------------------------------------------------------------
+	local pg = player:FindFirstChildOfClass("PlayerGui") or player:WaitForChild("PlayerGui", 5)
+	local gui = Instance.new("ScreenGui")
+	gui.Name = "CyberMenuUI"
+	gui.ResetOnSpawn = false
+	gui.DisplayOrder = 1000
+	gui.IgnoreGuiInset = true
+	gui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
+	gui.Parent = pg
+
+	-- Cadre rouge sur les bords de l'écran (scan / crashout), créé avant le menu donc derrière
+	local vignette = Instance.new("Frame")
+	vignette.Size = UDim2.fromScale(1, 1)
+	vignette.BackgroundTransparency = 1
+	vignette.Visible = false
+	vignette.Parent = gui
+	local vEdges = {}
+	local function edge(size, pos, rot)
+		local f = Instance.new("Frame")
+		f.Size = size
+		f.Position = pos
+		f.BackgroundColor3 = Color3.fromRGB(255, 0, 30)
+		f.BorderSizePixel = 0
+		f.Parent = vignette
+		local g = Instance.new("UIGradient", f)
+		g.Rotation = rot
+		g.Transparency = NumberSequence.new({
+			NumberSequenceKeypoint.new(0, 0.2),
+			NumberSequenceKeypoint.new(1, 1),
+		})
+		table.insert(vEdges, f)
+	end
+	edge(UDim2.fromScale(1, 0.16), UDim2.fromScale(0, 0), 90)
+	edge(UDim2.fromScale(1, 0.16), UDim2.fromScale(0, 0.84), 270)
+	edge(UDim2.fromScale(0.1, 1), UDim2.fromScale(0, 0), 0)
+	edge(UDim2.fromScale(0.1, 1), UDim2.fromScale(0.9, 0), 180)
+
+	local scanLine = Instance.new("Frame")
+	scanLine.Size = UDim2.new(1, 0, 0, 2)
+	scanLine.BackgroundColor3 = Color3.fromRGB(255, 30, 50)
+	scanLine.BackgroundTransparency = 0.3
+	scanLine.BorderSizePixel = 0
+	scanLine.Visible = false
+	scanLine.Parent = vignette
+
+	local function mkLabel(parent, text, x, y, w, h, color, size)
+		local l = Instance.new("TextLabel")
+		l.Size = UDim2.fromOffset(w, h)
+		l.Position = UDim2.fromOffset(x, y)
+		l.BackgroundTransparency = 1
+		l.Text = text
+		l.TextColor3 = color
+		l.Font = Enum.Font.Code
+		l.TextSize = size
+		l.TextXAlignment = Enum.TextXAlignment.Left
+		l.Parent = parent
+		return l
+	end
+	local function mkButton(parent, text, x, y, w, h)
+		local b = Instance.new("TextButton")
+		b.Size = UDim2.fromOffset(w, h)
+		b.Position = UDim2.fromOffset(x, y)
+		b.BackgroundColor3 = PANEL
+		b.BorderSizePixel = 0
+		b.Text = text
+		b.TextColor3 = Color3.new(1, 1, 1)
+		b.Font = Enum.Font.Code
+		b.TextSize = 14
+		b.Parent = parent
+		return b
+	end
+
+	local frame = Instance.new("Frame")
+	frame.Size = UDim2.fromOffset(360, 620)
+	frame.Position = UDim2.new(1, -380, 0, 40)
+	frame.BackgroundColor3 = DARK
+	frame.BorderSizePixel = 0
+	frame.Active = true
+	frame.Draggable = true
+	frame.Parent = gui
+	local fs = Instance.new("UIStroke", frame)
+	fs.Thickness = 2
+	fs.Color = Color3.new(1, 1, 1)
+	local fg = Instance.new("UIGradient", fs)
+	fg.Color = ColorSequence.new({
+		ColorSequenceKeypoint.new(0, CYAN),
+		ColorSequenceKeypoint.new(0.5, MAGENTA),
+		ColorSequenceKeypoint.new(1, GREEN),
+	})
+
+	mkLabel(frame, "> CYBER MENU_ V2 Made in Anti_modo", 10, 8, 250, 24, CYAN, 18)
+	local statusLbl = mkLabel(frame, "Prêt", 10, 596, 340, 20, YELLOW, 13)
+	local function setStatus(t) statusLbl.Text = t end
+
+	local function setOpen(o) frame.Visible = o end
+	local toggle = mkButton(gui, "CY", 0, 0, 44, 44)
+	toggle.Position = UDim2.new(1, -54, 0, 4)
+	toggle.TextColor3 = CYAN
+	toggle.TextSize = 16
+	local ts = Instance.new("UIStroke", toggle)
+	ts.Color = CYAN
+	ts.Thickness = 2
+	table.insert(connections, toggle.MouseButton1Click:Connect(function() setOpen(not frame.Visible) end))
+
+	local closeBtn = mkButton(frame, "X", 326, 6, 26, 24)
+	closeBtn.TextColor3 = RED
+	table.insert(connections, closeBtn.MouseButton1Click:Connect(function() setOpen(false) end))
+
+	local pages, tabButtons = {}, {}
+	local TABS = { "SANDEVISTAN", "QUICKHACK", "CONFIG" }
+	local function showTab(name)
+		for n, p in pairs(pages) do p.Visible = (n == name) end
+		for n, b in pairs(tabButtons) do
+			b.BackgroundColor3 = (n == name) and SEL or PANEL
+		end
+	end
+	for i, name in ipairs(TABS) do
+		local b = mkButton(frame, name, 10 + (i - 1) * 114, 38, 110, 28)
+		b.TextSize = 12
+		tabButtons[name] = b
+		local p = Instance.new("Frame")
+		p.Size = UDim2.fromOffset(340, 520)
+		p.Position = UDim2.fromOffset(10, 72)
+		p.BackgroundTransparency = 1
+		p.Visible = false
+		p.Parent = frame
+		pages[name] = p
+		table.insert(connections, b.MouseButton1Click:Connect(function() showTab(name) end))
+	end
+
+	----------------------------------------------------------------
+	-- OUTILS : couleurs, tchat, glitch, onde
+	----------------------------------------------------------------
+	local function getColor(t, offset)
+		if cfg.COLOR_MODE == "palette" then
+			local i = (math.floor(t * cfg.COLOR_SPEED * 3 + offset * #PALETTE) % #PALETTE) + 1
+			return PALETTE[i]
+		end
+		return Color3.fromHSV((t * cfg.COLOR_SPEED * 0.5 + offset) % 1, 0.9, 1)
+	end
+
+	local function chatSay(msg)
+		local sent = pcall(function()
+			if TextChatService.ChatVersion == Enum.ChatVersion.TextChatService then
+				local channels = TextChatService:WaitForChild("TextChannels", 3)
+				local ch = channels:FindFirstChild("RBXGeneral") or channels:FindFirstChildWhichIsA("TextChannel")
+				ch:SendAsync(msg)
+			else
+				ReplicatedStorage.DefaultChatSystemChatEvents.SayMessageRequest:FireServer(msg, "All")
+			end
+		end)
+		if not sent then warn("[CyberMenu] Envoi tchat impossible") end
+	end
+
+	local GLITCH = { "▓", "▒", "░", "#", "@", "%", "$", "&", "/", "0", "1" }
+	local function glitchString(n)
+		local t = {}
+		for i = 1, n do t[i] = GLITCH[math.random(#GLITCH)] end
+		return table.concat(t)
+	end
+
+	-- Onde néon qui part du sol et s'élargit jusqu'au rayon voulu
+	local function makeWave(origin, radius, color, duration)
+		local ring = Instance.new("Part")
+		ring.Shape = Enum.PartType.Cylinder
+		ring.Size = Vector3.new(0.5, 2, 2)
+		ring.CFrame = CFrame.new(origin - Vector3.new(0, 2.8, 0)) * CFrame.Angles(0, 0, math.pi / 2)
+		ring.Anchored = true
+		ring.CanCollide = false
+		ring.CanQuery = false
+		ring.CanTouch = false
+		ring.Material = Enum.Material.Neon
+		ring.Color = color
+		ring.Transparency = 0.4
+		ring.Parent = workspace
+		TweenService:Create(ring, TweenInfo.new(duration, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {
+			Size = Vector3.new(0.5, radius * 2, radius * 2),
+			Transparency = 1,
+		}):Play()
+		Debris:AddItem(ring, duration + 0.2)
+	end
+
+	local function clearScan()
+		for _, o in ipairs(scanObjects) do
+			if o and o.Parent then o:Destroy() end
+		end
+		table.clear(scanObjects)
+	end
+
+	----------------------------------------------------------------
+	-- PAGE 1 : SANDEVISTAN + SCAN
+	----------------------------------------------------------------
+	local pS = pages["SANDEVISTAN"]
+	mkLabel(pS, "[ SANDEVISTAN ]", 0, 4, 300, 18, CYAN, 13)
+	local sandBtn = mkButton(pS, "ACTIVER SANDEVISTAN", 0, 28, 340, 50)
+	sandBtn.BackgroundColor3 = Color3.fromRGB(0, 110, 130)
+	sandBtn.TextSize = 17
+	mkLabel(pS, "Effet multicolore, vitesse et fantômes.", 0, 82, 340, 18, Color3.fromRGB(130, 150, 160), 12)
+
+	mkLabel(pS, "[ SCAN JOUEURS ]", 0, 122, 300, 18, RED, 13)
+	local scanBtn = mkButton(pS, "LANCER LE SCAN", 0, 146, 340, 50)
+	scanBtn.BackgroundColor3 = Color3.fromRGB(140, 20, 35)
+	scanBtn.TextSize = 17
+	mkLabel(pS, "Onde rouge, contour pulsant, pseudo et distance.", 0, 200, 340, 18, Color3.fromRGB(130, 150, 160), 12)
+
+	local keyInfo = mkLabel(pS, "", 0, 250, 340, 40, Color3.fromRGB(130, 150, 160), 12)
+	keyInfo.TextWrapped = true
+	keyInfo.TextYAlignment = Enum.TextYAlignment.Top
+	local function refreshKeyInfo()
+		keyInfo.Text = ("Raccourcis : %s = Sandevistan, %s = Scan, %s = menu"):format(
+			keys.activate.Name, keys.scan.Name, keys.menu.Name)
+	end
+	refreshKeyInfo()
+
+	local function spawnGhost(character, t)
+		local root = character:FindFirstChild("HumanoidRootPart")
+		local rootY = root and root.Position.Y or 0
+		for _, part in ipairs(character:GetDescendants()) do
+			if part:IsA("BasePart") and part.Name ~= "HumanoidRootPart" and part.Transparency < 1 then
+				local ok2, ghost = pcall(function() return part:Clone() end)
+				if ok2 and ghost then
+					ghost:ClearAllChildren()
+					ghost.Anchored = true
+					ghost.CanCollide = false
+					ghost.CanQuery = false
+					ghost.CanTouch = false
+					ghost.Massless = true
+					ghost.Material = Enum.Material.Neon
+					ghost.Color = getColor(t, ((part.Position.Y - rootY) * 0.08) % 1)
+					ghost.Transparency = 0.35
+					ghost.CFrame = part.CFrame
+					ghost.Parent = workspace
+					TweenService:Create(ghost, TweenInfo.new(0.45), {Transparency = 1}):Play()
+					Debris:AddItem(ghost, 0.55)
+				end
+			end
+		end
+	end
+
+	local function startSandevistan()
+		if active or onCooldown then return end
+		local character = player.Character
+		local humanoid = character and character:FindFirstChildOfClass("Humanoid")
+		local camera = workspace.CurrentCamera
+		if not humanoid or not camera then setStatus("Perso introuvable") return end
+
+		active = true
+		setStatus("SANDEVISTAN ACTIF !")
+
+		local cc = Instance.new("ColorCorrectionEffect")
+		cc.Parent = Lighting
+		TweenService:Create(cc, TweenInfo.new(0.4), {Saturation = 0.3, Contrast = 0.2}):Play()
+		local blur = Instance.new("BlurEffect")
+		blur.Size = 0
+		blur.Parent = Lighting
+		TweenService:Create(blur, TweenInfo.new(0.4), {Size = 6}):Play()
+
+		local baseFov = camera.FieldOfView
+		TweenService:Create(camera, TweenInfo.new(0.4), {FieldOfView = baseFov + 20}):Play()
+		local baseSpeed = humanoid.WalkSpeed
+		humanoid.WalkSpeed = baseSpeed * cfg.SPEED_MULT
+
+		local startTime = os.clock()
+		while os.clock() - startTime < cfg.DURATION and active do
+			if not character.Parent or humanoid.Health <= 0 then break end
+			local t = os.clock() - startTime
+			spawnGhost(character, t)
+			if cfg.SCREEN_TINT then
+				cc.TintColor = Color3.new(1, 1, 1):Lerp(getColor(t, 0), 0.35)
+			end
+			task.wait(cfg.GHOST_RATE)
+		end
+
+		if humanoid and humanoid.Parent then humanoid.WalkSpeed = baseSpeed end
+		TweenService:Create(camera, TweenInfo.new(0.4), {FieldOfView = baseFov}):Play()
+		TweenService:Create(blur, TweenInfo.new(0.4), {Size = 0}):Play()
+		TweenService:Create(cc, TweenInfo.new(0.4), {
+			Saturation = 0, TintColor = Color3.new(1, 1, 1), Contrast = 0,
+		}):Play()
+		Debris:AddItem(blur, 0.5)
+		Debris:AddItem(cc, 0.5)
+
+		active = false
+		onCooldown = true
+		for i = cfg.COOLDOWN, 1, -1 do
+			if not gui.Parent then return end
+			setStatus("Sandevistan recharge : " .. i .. "s")
+			task.wait(1)
+		end
+		onCooldown = false
+		setStatus("Prêt")
+	end
+
+	-- SCAN : onde + contour rouge pulsant (le corps reste visible)
+	local function startScan()
+		if scanning or scanOnCooldown then return end
+		local character = player.Character
+		local myRoot = character and character:FindFirstChild("HumanoidRootPart")
+		if not myRoot then setStatus("Perso introuvable") return end
+
+		scanning = true
+		local WAVE_TIME = 1.2
+		makeWave(myRoot.Position, cfg.SCAN_RADIUS, Color3.fromRGB(255, 30, 50), WAVE_TIME)
+
+		local marks = {}
+		for _, plr in ipairs(Players:GetPlayers()) do
+			if plr ~= player and plr.Character then
+				local root = plr.Character:FindFirstChild("HumanoidRootPart")
+				local head = plr.Character:FindFirstChild("Head")
+				local dist = root and (root.Position - myRoot.Position).Magnitude
+				if root and head and dist <= cfg.SCAN_RADIUS then
+					local hl = Instance.new("Highlight")
+					hl.FillColor = Color3.fromRGB(255, 0, 30)
+					hl.FillTransparency = 0.88
+					hl.OutlineColor = Color3.fromRGB(255, 40, 60)
+					hl.OutlineTransparency = 0
+					hl.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
+					hl.Adornee = plr.Character
+					hl.Enabled = false
+					hl.Parent = plr.Character
+					table.insert(scanObjects, hl)
+
+					local bb = Instance.new("BillboardGui")
+					bb.Size = UDim2.fromOffset(200, 48)
+					bb.StudsOffset = Vector3.new(0, 3.2, 0)
+					bb.AlwaysOnTop = true
+					bb.Enabled = false
+					bb.Adornee = head
+					bb.Parent = head
+					table.insert(scanObjects, bb)
+
+					local nameL = Instance.new("TextLabel")
+					nameL.Size = UDim2.new(1, 0, 0.55, 0)
+					nameL.BackgroundTransparency = 1
+					nameL.TextColor3 = Color3.fromRGB(255, 50, 70)
+					nameL.TextStrokeTransparency = 0.3
+					nameL.Font = Enum.Font.Code
+					nameL.TextSize = 16
+					nameL.Text = "[ " .. plr.Name .. " ]"
+					nameL.Parent = bb
+
+					local distL = Instance.new("TextLabel")
+					distL.Size = UDim2.new(1, 0, 0.45, 0)
+					distL.Position = UDim2.fromScale(0, 0.55)
+					distL.BackgroundTransparency = 1
+					distL.TextColor3 = Color3.fromRGB(255, 160, 170)
+					distL.TextStrokeTransparency = 0.5
+					distL.Font = Enum.Font.Code
+					distL.TextSize = 13
+					distL.Text = ""
+					distL.Parent = bb
+
+					table.insert(marks, {
+						plr = plr, root = root, hl = hl, bb = bb, nameL = nameL, distL = distL,
+						appearAt = (dist / cfg.SCAN_RADIUS) * WAVE_TIME, shown = false,
+					})
+				end
+			end
+		end
+
+		setStatus((#marks == 0) and "Scan : personne à proximité" or ("SCAN : " .. #marks .. " cible(s)"))
+
+		-- cadre rouge + ligne de scan
+		vignette.Visible = true
+		scanLine.Visible = true
+		task.spawn(function()
+			while scanning and gui.Parent do
+				scanLine.Position = UDim2.new(0, 0, 0, 0)
+				TweenService:Create(scanLine, TweenInfo.new(1.2, Enum.EasingStyle.Linear), {
+					Position = UDim2.new(0, 0, 1, 0),
+				}):Play()
+				task.wait(1.2)
+			end
+		end)
+
+		local startTime = os.clock()
+		while os.clock() - startTime < cfg.SCAN_DURATION and scanning do
+			local t = os.clock() - startTime
+			local pulse = 0.5 + 0.5 * math.sin(t * 6)
+
+			for _, f in ipairs(vEdges) do
+				f.BackgroundTransparency = 0.15 + 0.35 * (1 - pulse)
+			end
+
+			for _, m in ipairs(marks) do
+				if t >= m.appearAt then
+					if not m.shown then
+						m.shown = true
+						m.hl.Enabled = true
+						m.bb.Enabled = true
+					end
+					m.hl.FillTransparency = 0.8 + 0.15 * pulse
+					m.hl.OutlineColor = Color3.fromRGB(255, 40, 60):Lerp(Color3.fromRGB(255, 190, 190), pulse * 0.5)
+					if m.root and m.root.Parent and myRoot.Parent then
+						local d = math.floor((m.root.Position - myRoot.Position).Magnitude)
+						m.distL.Text = d .. "m"
+					end
+				end
+			end
+			task.wait(0.05)
+		end
+
+		clearScan()
+		vignette.Visible = false
+		scanLine.Visible = false
+		scanning = false
+		scanOnCooldown = true
+		task.wait(cfg.SCAN_COOLDOWN)
+		scanOnCooldown = false
+		if not active and not onCooldown then setStatus("Prêt") end
+	end
+
+	table.insert(connections, sandBtn.MouseButton1Click:Connect(function() task.spawn(startSandevistan) end))
+	table.insert(connections, scanBtn.MouseButton1Click:Connect(function() task.spawn(startScan) end))
+
+	----------------------------------------------------------------
+	-- PAGE 2 : QUICKHACK + CRASHOUT
+	----------------------------------------------------------------
+	local pH = pages["QUICKHACK"]
+
+	mkLabel(pH, "[ 1. TYPE ]", 0, 0, 200, 18, GREEN, 13)
+	local catButtons = {}
+	local itemList, customBox, rebuildItems
+	local itemButtons = {}
+
+	local function refreshCats()
+		for n, b in pairs(catButtons) do
+			b.BackgroundColor3 = (n == selectedCategory) and SEL or PANEL
+		end
+	end
+	for i, name in ipairs(CATEGORIES) do
+		local col = (i - 1) % 3
+		local row = math.floor((i - 1) / 3)
+		local b = mkButton(pH, name, col * 114, 20 + row * 34, 108, 28)
+		catButtons[name] = b
+		table.insert(connections, b.MouseButton1Click:Connect(function()
+			selectedCategory = name
+			selectedItem = nil
+			refreshCats()
+			rebuildItems()
+		end))
+	end
+
+	mkLabel(pH, "[ 2. QUOI HACKER ]", 0, 92, 250, 18, GREEN, 13)
+	itemList = Instance.new("ScrollingFrame")
+	itemList.Size = UDim2.fromOffset(340, 96)
+	itemList.Position = UDim2.fromOffset(0, 112)
+	itemList.BackgroundColor3 = Color3.fromRGB(12, 18, 22)
+	itemList.BorderSizePixel = 0
+	itemList.ScrollBarThickness = 4
+	itemList.AutomaticCanvasSize = Enum.AutomaticSize.Y
+	itemList.CanvasSize = UDim2.new()
+	itemList.Visible = false
+	itemList.Parent = pH
+	local grid = Instance.new("UIGridLayout", itemList)
+	grid.CellSize = UDim2.fromOffset(106, 26)
+	grid.CellPadding = UDim2.fromOffset(6, 4)
+
+	customBox = Instance.new("TextBox")
+	customBox.Size = UDim2.fromOffset(340, 30)
+	customBox.Position = UDim2.fromOffset(0, 112)
+	customBox.BackgroundColor3 = PANEL
+	customBox.BorderSizePixel = 0
+	customBox.PlaceholderText = "écris ce que tu veux hacker..."
+	customBox.PlaceholderColor3 = Color3.fromRGB(120, 140, 135)
+	customBox.Text = ""
+	customBox.TextColor3 = Color3.new(1, 1, 1)
+	customBox.Font = Enum.Font.Code
+	customBox.TextSize = 13
+	customBox.ClearTextOnFocus = false
+	customBox.Visible = false
+	customBox.Parent = pH
+
+	rebuildItems = function()
+		for _, b in pairs(itemButtons) do b:Destroy() end
+		table.clear(itemButtons)
+		if selectedCategory == "Autre" then
+			itemList.Visible = false
+			customBox.Visible = true
+			return
+		end
+		customBox.Visible = false
+		itemList.Visible = true
+		for _, it in ipairs(ITEMS[selectedCategory] or {}) do
+			local b = Instance.new("TextButton")
+			b.BackgroundColor3 = PANEL
+			b.BorderSizePixel = 0
+			b.Text = it
+			b.TextColor3 = Color3.new(1, 1, 1)
+			b.Font = Enum.Font.Code
+			b.TextSize = 12
+			b.Parent = itemList
+			itemButtons[it] = b
+			table.insert(connections, b.MouseButton1Click:Connect(function()
+				selectedItem = it
+				for n, bb in pairs(itemButtons) do
+					bb.BackgroundColor3 = (n == it) and SEL or PANEL
+				end
+			end))
+		end
+	end
+
+	mkLabel(pH, "[ 3. CIBLE ]", 0, 218, 200, 18, GREEN, 13)
+	local list = Instance.new("ScrollingFrame")
+	list.Size = UDim2.fromOffset(340, 110)
+	list.Position = UDim2.fromOffset(0, 238)
+	list.BackgroundColor3 = Color3.fromRGB(12, 18, 22)
+	list.BorderSizePixel = 0
+	list.ScrollBarThickness = 4
+	list.AutomaticCanvasSize = Enum.AutomaticSize.Y
+	list.CanvasSize = UDim2.new()
+	list.Parent = pH
+	Instance.new("UIListLayout", list).Padding = UDim.new(0, 3)
+
+	local playerButtons = {}
+	local function refreshTargets()
+		for plr, b in pairs(playerButtons) do
+			b.BackgroundColor3 = (plr == selectedTarget) and Color3.fromRGB(150, 20, 35) or PANEL
+		end
+	end
+	local function addPlayer(plr)
+		if playerButtons[plr] then return end
+		local b = Instance.new("TextButton")
+		b.Size = UDim2.new(1, -8, 0, 26)
+		b.BackgroundColor3 = PANEL
+		b.BorderSizePixel = 0
+		b.Text = " " .. plr.Name .. (plr == player and "  (toi)" or "")
+		b.TextXAlignment = Enum.TextXAlignment.Left
+		b.TextColor3 = Color3.new(1, 1, 1)
+		b.Font = Enum.Font.Code
+		b.TextSize = 13
+		b.Parent = list
+		playerButtons[plr] = b
+		table.insert(connections, b.MouseButton1Click:Connect(function()
+			selectedTarget = plr
+			refreshTargets()
+		end))
+	end
+	local function removePlayer(plr)
+		if playerButtons[plr] then playerButtons[plr]:Destroy() playerButtons[plr] = nil end
+		if selectedTarget == plr then selectedTarget = nil end
+	end
+	for _, p in ipairs(Players:GetPlayers()) do addPlayer(p) end
+	table.insert(connections, Players.PlayerAdded:Connect(addPlayer))
+	table.insert(connections, Players.PlayerRemoving:Connect(removePlayer))
+
+	local rpBtn = mkButton(pH, "RP TCHAT : ON", 0, 356, 340, 26)
+	rpBtn.TextColor3 = GREEN
+	table.insert(connections, rpBtn.MouseButton1Click:Connect(function()
+		rpEnabled = not rpEnabled
+		rpBtn.Text = "RP TCHAT : " .. (rpEnabled and "ON" or "OFF")
+		rpBtn.TextColor3 = rpEnabled and GREEN or RED
+	end))
+
+	local launch = mkButton(pH, "[ LANCER LE HACK ]", 0, 388, 340, 42)
+	launch.BackgroundColor3 = Color3.fromRGB(0, 140, 70)
+	launch.TextSize = 16
+
+	local crashBtn = mkButton(pH, "[ CRASHOUT : ZONE ]", 0, 438, 340, 42)
+	crashBtn.BackgroundColor3 = Color3.fromRGB(170, 0, 90)
+	crashBtn.TextSize = 16
+	local crashInfo = mkLabel(pH, "", 0, 484, 340, 18, Color3.fromRGB(130, 150, 160), 12)
+	local function refreshCrashInfo()
+		crashInfo.Text = ("Grille le cerveau des joueurs à moins de %dm (réglable dans CONFIG)"):format(cfg.CRASH_RADIUS)
+	end
+	refreshCrashInfo()
+	crashInfo.TextWrapped = true
+	crashInfo.Size = UDim2.fromOffset(340, 34)
+	crashInfo.TextYAlignment = Enum.TextYAlignment.Top
+
+	-- Barre de chargement
+	local SEGMENTS = 24
+	local loader = Instance.new("Frame")
+	loader.Size = UDim2.fromOffset(460, 110)
+	loader.Position = UDim2.new(0.5, -230, 0.72, 0)
+	loader.BackgroundColor3 = Color3.fromRGB(3, 6, 4)
+	loader.BackgroundTransparency = 0.15
+	loader.BorderSizePixel = 0
+	loader.Visible = false
+	loader.Parent = gui
+	local lstroke = Instance.new("UIStroke", loader)
+	lstroke.Color = GREEN
+	lstroke.Thickness = 2
+
+	local loadTitle = mkLabel(loader, "PIRATAGE", 14, 8, 430, 22, GREEN, 17)
+	local loadPhase = mkLabel(loader, "", 14, 34, 430, 18, YELLOW, 13)
+	local loadPct = mkLabel(loader, "0%", 14, 82, 200, 20, Color3.new(1, 1, 1), 14)
+	local loadNoise = mkLabel(loader, "", 200, 82, 250, 20, Color3.fromRGB(80, 120, 90), 13)
+	loadNoise.TextXAlignment = Enum.TextXAlignment.Right
+
+	local segs = {}
+	local segW = (432 - (SEGMENTS - 1) * 3) / SEGMENTS
+	for i = 1, SEGMENTS do
+		local s = Instance.new("Frame")
+		s.Size = UDim2.fromOffset(segW, 18)
+		s.Position = UDim2.fromOffset(14 + (i - 1) * (segW + 3), 58)
+		s.BackgroundColor3 = Color3.fromRGB(20, 35, 26)
+		s.BorderSizePixel = 0
+		s.Parent = loader
+		segs[i] = s
+	end
+
+	local function setProgress(pct)
+		local filled = math.floor(pct / 100 * SEGMENTS)
+		for i, s in ipairs(segs) do
+			if i <= filled then
+				local k = i / SEGMENTS
+				s.BackgroundColor3 = (k < 0.6) and GREEN or ((k < 0.85) and YELLOW or RED)
+			else
+				s.BackgroundColor3 = Color3.fromRGB(20, 35, 26)
+			end
+		end
+		loadPct.Text = math.floor(pct) .. "%"
+		loadNoise.Text = glitchString(14)
+	end
+
+	local function screenFlash(strong)
+		local cc = Instance.new("ColorCorrectionEffect")
+		cc.TintColor = Color3.fromRGB(120, 255, 170)
+		cc.Contrast = strong and 0.35 or 0.15
+		cc.Parent = Lighting
+		local blur = Instance.new("BlurEffect")
+		blur.Size = strong and 12 or 5
+		blur.Parent = Lighting
+		TweenService:Create(cc, TweenInfo.new(0.5), {TintColor = Color3.new(1, 1, 1), Contrast = 0}):Play()
+		TweenService:Create(blur, TweenInfo.new(0.5), {Size = 0}):Play()
+		Debris:AddItem(cc, 0.7)
+		Debris:AddItem(blur, 0.7)
+	end
+
+	local PHASES = {
+		{ name = "Connexion au réseau", from = 0, to = 22, time = 1.6 },
+		{ name = "Contournement du pare-feu", from = 22, to = 55, time = 2.2 },
+		{ name = "Injection du code", from = 55, to = 88, time = 2.2 },
+		{ name = "Prise de contrôle", from = 88, to = 100, time = 1.2 },
+	}
+	local CRASH_PHASES = {
+		{ name = "Ciblage des implants neuronaux", from = 0, to = 25, time = 1.4 },
+		{ name = "Surcharge du cortex", from = 25, to = 60, time = 1.8 },
+		{ name = "Cascade de défaillances", from = 60, to = 92, time = 1.8 },
+		{ name = "CRASHOUT", from = 92, to = 100, time = 0.8 },
+	}
+
+	-- Joue les phases de chargement ; onPhase(idx) est appelé au début de chaque phase
+	local function runPhases(phases, onPhase)
+		for idx, ph in ipairs(phases) do
+			loadPhase.Text = "> " .. ph.name .. "..."
+			if onPhase then task.spawn(onPhase, idx) end
+			local t0 = os.clock()
+			while true do
+				local a = math.clamp((os.clock() - t0) / ph.time, 0, 1)
+				setProgress(ph.from + (ph.to - ph.from) * (a * a * (3 - 2 * a)))
+				if math.random() < 0.12 then
+					loadPhase.Text = "> " .. glitchString(#ph.name)
+					task.wait(0.03)
+					loadPhase.Text = "> " .. ph.name .. "..."
+				end
+				if a >= 1 then break end
+				task.wait(0.04)
+			end
+		end
+		setProgress(100)
+	end
+
+	local function runHack()
+		if busy then return end
+		if not selectedCategory then setStatus("Choisis un type !") return end
+
+		local item = selectedItem
+		if selectedCategory == "Autre" then
+			local txt = customBox.Text:gsub("[<>]", "")
+			item = (txt ~= "") and txt or nil
+		end
+		if not item then setStatus("Choisis quoi hacker !") return end
+		if not selectedTarget then setStatus("Choisis un joueur !") return end
+
+		local name = selectedTarget.Name
+		local lines = RP[selectedCategory]
+
+		busy = true
+		launch.Text = "[ HACK EN COURS... ]"
+		launch.BackgroundColor3 = Color3.fromRGB(70, 70, 70)
+		setStatus("Hack en cours...")
+		loadTitle.Text = ("PIRATAGE : %s (%s) > %s"):format(item:upper(), selectedCategory:upper(), name)
+		loadTitle.TextColor3 = GREEN
+		setProgress(0)
+		loader.Visible = true
+		task.spawn(screenFlash, false)
+
+		local function rp(i)
+			if rpEnabled then chatSay(fill(lines[i], name, item)) end
+		end
+
+		runPhases(PHASES, function(idx)
+			if idx == 1 then rp(1) elseif idx == 3 then rp(2) end
+		end)
+
+		loadPhase.Text = "> ACCÈS ACCORDÉ"
+		loadPhase.TextColor3 = GREEN
+		task.spawn(screenFlash, true)
+		task.spawn(rp, 3)
+		task.wait(1.4)
+		loader.Visible = false
+		loadPhase.TextColor3 = YELLOW
+
+		setStatus(item .. " → " .. name .. " ✔")
+		launch.Text = "[ LANCER LE HACK ]"
+		launch.BackgroundColor3 = Color3.fromRGB(0, 140, 70)
+		busy = false
+	end
+	table.insert(connections, launch.MouseButton1Click:Connect(function() task.spawn(runHack) end))
+
+	-- CRASHOUT : effet de zone sur tous les joueurs proches
+	local function applyCrash(myRoot, victims)
+		local camera = workspace.CurrentCamera
+		local character = player.Character
+		local humanoid = character and character:FindFirstChildOfClass("Humanoid")
+
+		makeWave(myRoot.Position, cfg.CRASH_RADIUS, MAGENTA, 1.0)
+		task.delay(0.25, function() makeWave(myRoot.Position, cfg.CRASH_RADIUS, RED, 1.0) end)
+
+		local cc = Instance.new("ColorCorrectionEffect")
+		cc.TintColor = Color3.fromRGB(255, 80, 120)
+		cc.Contrast = 0.35
+		cc.Saturation = 0.4
+		cc.Parent = Lighting
+		local blur = Instance.new("BlurEffect")
+		blur.Size = 10
+		blur.Parent = Lighting
+
+		vignette.Visible = true
+		local objs = {}
+		local fx = {}
+		for _, v in ipairs(victims) do
+			local char = v.plr.Character
+			local head = char and char:FindFirstChild("Head")
+			if char and head then
+				local hl = Instance.new("Highlight")
+				hl.FillColor = RED
+				hl.FillTransparency = 0.4
+				hl.OutlineColor = Color3.new(1, 1, 1)
+				hl.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
+				hl.Adornee = char
+				hl.Parent = char
+				table.insert(objs, hl)
+
+				local bb = Instance.new("BillboardGui")
+				bb.Size = UDim2.fromOffset(220, 50)
+				bb.StudsOffset = Vector3.new(0, 3.2, 0)
+				bb.AlwaysOnTop = true
+				bb.Adornee = head
+				bb.Parent = head
+				table.insert(objs, bb)
+
+				local l1 = Instance.new("TextLabel")
+				l1.Size = UDim2.new(1, 0, 0.55, 0)
+				l1.BackgroundTransparency = 1
+				l1.Font = Enum.Font.Code
+				l1.TextSize = 16
+				l1.TextColor3 = RED
+				l1.TextStrokeTransparency = 0.2
+				l1.Parent = bb
+				local l2 = Instance.new("TextLabel")
+				l2.Size = UDim2.new(1, 0, 0.45, 0)
+				l2.Position = UDim2.fromScale(0, 0.55)
+				l2.BackgroundTransparency = 1
+				l2.Font = Enum.Font.Code
+				l2.TextSize = 13
+				l2.TextColor3 = Color3.fromRGB(255, 200, 210)
+				l2.TextStrokeTransparency = 0.4
+				l2.Text = v.plr.Name
+				l2.Parent = bb
+
+				local pe = Instance.new("ParticleEmitter")
+				pe.Rate = 40
+				pe.Lifetime = NumberRange.new(0.5, 1)
+				pe.Speed = NumberRange.new(4, 8)
+				pe.SpreadAngle = Vector2.new(180, 180)
+				pe.LightEmission = 1
+				pe.Color = ColorSequence.new(RED)
+				pe.Size = NumberSequence.new(0.4, 0)
+				pe.Parent = head
+				table.insert(objs, pe)
+
+				table.insert(fx, { hl = hl, l1 = l1 })
+			end
+		end
+
+		local t0 = os.clock()
+		while os.clock() - t0 < cfg.CRASH_DURATION do
+			local alt = math.random() < 0.5
+			for _, f in ipairs(fx) do
+				if f.hl.Parent then
+					f.hl.FillColor = alt and RED or Color3.new(1, 1, 1)
+					f.hl.FillTransparency = 0.2 + 0.5 * math.random()
+					f.l1.Text = (math.random() < 0.3) and glitchString(10) or "⚠ CRASHOUT ⚠"
+				end
+			end
+			for _, e in ipairs(vEdges) do e.BackgroundTransparency = math.random() * 0.5 end
+			cc.TintColor = alt and Color3.fromRGB(255, 60, 100) or Color3.fromRGB(255, 200, 220)
+			blur.Size = 3 + math.random() * 9
+			if humanoid and humanoid.Parent then
+				humanoid.CameraOffset = Vector3.new((math.random() - 0.5) * 0.5, (math.random() - 0.5) * 0.5, 0)
+			end
+			task.wait(0.07)
+		end
+
+		if humanoid and humanoid.Parent then humanoid.CameraOffset = Vector3.new(0, 0, 0) end
+		for _, o in ipairs(objs) do
+			if o and o.Parent then o:Destroy() end
+		end
+		vignette.Visible = false
+		TweenService:Create(cc, TweenInfo.new(0.5), {TintColor = Color3.new(1, 1, 1), Contrast = 0, Saturation = 0}):Play()
+		TweenService:Create(blur, TweenInfo.new(0.5), {Size = 0}):Play()
+		Debris:AddItem(cc, 0.7)
+		Debris:AddItem(blur, 0.7)
+	end
+
+	local function runCrashout()
+		if busy then return end
+		local character = player.Character
+		local myRoot = character and character:FindFirstChild("HumanoidRootPart")
+		if not myRoot then setStatus("Perso introuvable") return end
+
+		local victims = {}
+		for _, plr in ipairs(Players:GetPlayers()) do
+			if plr ~= player and plr.Character then
+				local root = plr.Character:FindFirstChild("HumanoidRootPart")
+				if root and (root.Position - myRoot.Position).Magnitude <= cfg.CRASH_RADIUS then
+					table.insert(victims, { plr = plr })
+				end
+			end
+		end
+		if #victims == 0 then setStatus("Crashout : personne dans la zone") return end
+
+		busy = true
+		crashBtn.Text = "[ CRASHOUT EN COURS... ]"
+		crashBtn.BackgroundColor3 = Color3.fromRGB(70, 70, 70)
+		setStatus("Crashout en cours...")
+		loadTitle.Text = ("CRASHOUT : %d cible(s) dans %dm"):format(#victims, cfg.CRASH_RADIUS)
+		loadTitle.TextColor3 = MAGENTA
+		setProgress(0)
+		loader.Visible = true
+		task.spawn(screenFlash, false)
+
+		local function rp(i)
+			if rpEnabled then
+				local s = CRASH_RP[i]:gsub("{n}", tostring(#victims)):gsub("{r}", tostring(cfg.CRASH_RADIUS))
+				chatSay(s)
+			end
+		end
+
+		runPhases(CRASH_PHASES, function(idx)
+			if idx == 1 then rp(1) elseif idx == 3 then rp(2) end
+		end)
+
+		loadPhase.Text = "> CERVEAUX EN SURCHARGE"
+		loadPhase.TextColor3 = RED
+		task.spawn(rp, 3)
+		task.wait(0.3)
+		loader.Visible = false
+		loadPhase.TextColor3 = YELLOW
+		loadTitle.TextColor3 = GREEN
+
+		applyCrash(myRoot, victims)
+
+		setStatus("Crashout : " .. #victims .. " cerveau(x) grillé(s) ✔")
+		crashBtn.Text = "[ CRASHOUT : ZONE ]"
+		crashBtn.BackgroundColor3 = Color3.fromRGB(170, 0, 90)
+		busy = false
+	end
+	table.insert(connections, crashBtn.MouseButton1Click:Connect(function() task.spawn(runCrashout) end))
+
+	----------------------------------------------------------------
+	-- PAGE 3 : CONFIG
+	----------------------------------------------------------------
+	local pC = pages["CONFIG"]
+	local cl = Instance.new("ScrollingFrame")
+	cl.Size = UDim2.fromOffset(340, 515)
+	cl.BackgroundTransparency = 1
+	cl.BorderSizePixel = 0
+	cl.ScrollBarThickness = 4
+	cl.AutomaticCanvasSize = Enum.AutomaticSize.Y
+	cl.CanvasSize = UDim2.new()
+	cl.Parent = pC
+	Instance.new("UIListLayout", cl).Padding = UDim.new(0, 5)
+
+	local function section(text)
+		local l = Instance.new("TextLabel")
+		l.Size = UDim2.new(1, -8, 0, 22)
+		l.BackgroundTransparency = 1
+		l.Text = "— " .. text .. " —"
+		l.TextColor3 = MAGENTA
+		l.Font = Enum.Font.Code
+		l.TextSize = 13
+		l.Parent = cl
+	end
+	local function row(text)
+		local r = Instance.new("Frame")
+		r.Size = UDim2.new(1, -8, 0, 30)
+		r.BackgroundTransparency = 1
+		r.Parent = cl
+		local l = Instance.new("TextLabel")
+		l.Size = UDim2.new(0.55, 0, 1, 0)
+		l.BackgroundTransparency = 1
+		l.Text = text
+		l.TextXAlignment = Enum.TextXAlignment.Left
+		l.TextColor3 = Color3.new(1, 1, 1)
+		l.Font = Enum.Font.Code
+		l.TextSize = 13
+		l.Parent = r
+		return r
+	end
+	local function style(c, r)
+		c.Size = UDim2.new(0.43, 0, 1, 0)
+		c.Position = UDim2.new(0.57, 0, 0, 0)
+		c.BackgroundColor3 = PANEL
+		c.BorderSizePixel = 0
+		c.TextColor3 = Color3.new(1, 1, 1)
+		c.Font = Enum.Font.Code
+		c.TextSize = 13
+		c.Parent = r
+	end
+	local function addNumber(label, key, minV, maxV)
+		local r = row(label)
+		local box = Instance.new("TextBox")
+		box.Text = tostring(cfg[key])
+		box.ClearTextOnFocus = false
+		style(box, r)
+		table.insert(connections, box.FocusLost:Connect(function()
+			local n = tonumber(box.Text)
+			if n then cfg[key] = math.clamp(n, minV, maxV) end
+			box.Text = tostring(cfg[key])
+			refreshCrashInfo()
+		end))
+	end
+	local function addKeybind(label, key)
+		local r = row(label)
+		local btn = Instance.new("TextButton")
+		btn.Text = keys[key].Name
+		style(btn, r)
+		table.insert(connections, btn.MouseButton1Click:Connect(function()
+			waitingFor, waitingButton = key, btn
+			btn.Text = "Appuie..."
+		end))
+	end
+	local function addToggle(label, getText, onClick)
+		local r = row(label)
+		local btn = Instance.new("TextButton")
+		btn.Text = getText()
+		style(btn, r)
+		table.insert(connections, btn.MouseButton1Click:Connect(function()
+			onClick()
+			btn.Text = getText()
+		end))
+	end
+
+	section("TOUCHES")
+	addKeybind("Sandevistan", "activate")
+	addKeybind("Scan joueurs", "scan")
+	addKeybind("Ouvrir menu", "menu")
+	section("SANDEVISTAN")
+	addNumber("Durée (s)", "DURATION", 1, 60)
+	addNumber("Recharge (s)", "COOLDOWN", 0, 60)
+	addNumber("Vitesse (x)", "SPEED_MULT", 0.5, 10)
+	addNumber("Intervalle fantômes", "GHOST_RATE", 0.005, 0.5)
+	addNumber("Vitesse couleurs", "COLOR_SPEED", 0.1, 10)
+	addToggle("Mode couleur", function() return cfg.COLOR_MODE end, function()
+		cfg.COLOR_MODE = (cfg.COLOR_MODE == "rainbow") and "palette" or "rainbow"
+	end)
+	addToggle("Teinte écran", function() return cfg.SCREEN_TINT and "ON" or "OFF" end, function()
+		cfg.SCREEN_TINT = not cfg.SCREEN_TINT
+	end)
+	section("SCAN")
+	addNumber("Rayon (studs)", "SCAN_RADIUS", 10, 1000)
+	addNumber("Durée (s)", "SCAN_DURATION", 1, 30)
+	addNumber("Recharge (s)", "SCAN_COOLDOWN", 0, 60)
+	section("CRASHOUT")
+	addNumber("Rayon (studs)", "CRASH_RADIUS", 10, 500)
+	addNumber("Durée effet (s)", "CRASH_DURATION", 1, 20)
+
+	----------------------------------------------------------------
+	-- INPUTS
+	----------------------------------------------------------------
+	table.insert(connections, UIS.InputBegan:Connect(function(input, gameProcessed)
+		if input.UserInputType ~= Enum.UserInputType.Keyboard then return end
+
+		if waitingFor then
+			if input.KeyCode ~= Enum.KeyCode.Escape then
+				keys[waitingFor] = input.KeyCode
+			end
+			waitingButton.Text = keys[waitingFor].Name
+			waitingFor, waitingButton = nil, nil
+			refreshKeyInfo()
+			return
+		end
+
+		if UIS:GetFocusedTextBox() then return end
+
+		if input.KeyCode == keys.menu then
+			setOpen(not frame.Visible)
+			return
+		end
+		if gameProcessed then return end
+
+		if input.KeyCode == keys.activate then
+			task.spawn(startSandevistan)
+		elseif input.KeyCode == keys.scan then
+			task.spawn(startScan)
+		end
+	end))
+
+	_G.CyberCleanup = function()
+		active, scanning = false, false
+		for _, c in ipairs(connections) do c:Disconnect() end
+		clearScan()
+		if gui then gui:Destroy() end
+	end
+
+	showTab("SANDEVISTAN")
+	print("[CyberMenu v2] chargé : M ou bouton CY pour ouvrir/fermer")
+end)
+
+if not ok then
+	warn("[CyberMenu] ERREUR : " .. tostring(err))
+	local pg = game.Players.LocalPlayer:FindFirstChildOfClass("PlayerGui")
+	if pg then
+		local g = Instance.new("ScreenGui", pg)
+		g.DisplayOrder = 9999
+		local l = Instance.new("TextLabel", g)
+		l.Size = UDim2.fromOffset(600, 80)
+		l.Position = UDim2.new(0.5, -300, 0, 20)
+		l.BackgroundColor3 = Color3.new(0, 0, 0)
+		l.TextColor3 = Color3.fromRGB(255, 60, 60)
+		l.TextWrapped = true
+		l.Text = "ERREUR : " .. tostring(err)
+	end
+end
