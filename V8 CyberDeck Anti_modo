@@ -1,0 +1,1833 @@
+local ok, err = pcall(function()
+	local Players = game:GetService("Players")
+	local UIS = game:GetService("UserInputService")
+	local Lighting = game:GetService("Lighting")
+	local TweenService = game:GetService("TweenService")
+	local TextChatService = game:GetService("TextChatService")
+	local ReplicatedStorage = game:GetService("ReplicatedStorage")
+	local RunService = game:GetService("RunService")
+	local Debris = game:GetService("Debris")
+
+	for _, n in ipairs({ "CyberCleanup", "SandevistanCleanup", "QuickhackCleanup", "CyberNetCleanup" }) do
+		if _G[n] then pcall(_G[n]) end
+	end
+
+	local player = Players.LocalPlayer
+	local conns, scanObjects, tempFx = {}, {}, {}
+	local CRASH_CODE = "RedcliffArasaka2027"
+
+	-- Logos : remplace par "rbxassetid://TON_ID" pour tes propres images
+	local ICONS = { logo = "⌬", sande = "⚡", hack = "☠", scan = "◎", net = "📡", config = "⚙" }
+
+	local cfg = {
+		DURATION = 10, COOLDOWN = 5, GHOST_RATE = 0.03, SPEED_MULT = 4,
+		COLOR_MODE = "rainbow", COLOR_SPEED = 1.2, SCREEN_TINT = true,
+		AIMLOCK = true, AIM_RANGE = 150, AIM_SPEED = 14, AIM_FOV = 45, AIM_HEAD = true, AIM_WALLCHECK = true,
+		SCAN_RADIUS = 100, SCAN_DURATION = 6, SCAN_COOLDOWN = 3,
+		CRASH_RADIUS = 60, CRASH_DURATION = 6,
+		RAGDOLL = true, RAGDOLL_TIME = 4,
+		SPEED_THRESHOLD = 40, HOLD_TIME = 0.3, DETECT_RADIUS = 400, PING_RADIUS = 150,
+		RECEIVE_EFFECTS = true, REPLY_TO_SCAN = true, DETECT_SANDE = true, SEND_PING = true,
+	}
+	local keys = { activate = Enum.KeyCode.Q, scan = Enum.KeyCode.U, menu = Enum.KeyCode.M, aim = Enum.KeyCode.Z }
+	local PALETTE = {
+		Color3.fromRGB(0, 255, 255), Color3.fromRGB(255, 0, 200), Color3.fromRGB(255, 240, 0),
+		Color3.fromRGB(0, 255, 100), Color3.fromRGB(255, 120, 0), Color3.fromRGB(160, 60, 255),
+		Color3.fromRGB(255, 40, 60),
+	}
+	local C = {
+		CYAN = Color3.fromRGB(0, 240, 255), MAG = Color3.fromRGB(255, 0, 170), YEL = Color3.fromRGB(255, 230, 0),
+		RED = Color3.fromRGB(255, 40, 60), GREEN = Color3.fromRGB(0, 255, 120), WHITE = Color3.new(1, 1, 1),
+		GREY = Color3.fromRGB(120, 135, 155), BG = Color3.fromRGB(7, 9, 16), PANEL = Color3.fromRGB(13, 17, 28),
+		PANEL2 = Color3.fromRGB(20, 26, 42),
+	}
+	local TITLE_FONT = Enum.Font.GothamBlack
+
+	-- état partagé
+	local st = {
+		active = false, onCooldown = false, scanning = false, scanOnCooldown = false,
+		busy = false, rpEnabled = true, picking = false, remote = false, crashUnlocked = false,
+		crashMode = "ZONE", cat = nil, item = nil, target = nil,
+		waitingFor = nil, waitingButton = nil, sandState = nil, rag = nil,
+	}
+	local cyber, det = {}, {}
+	local fn, ui = {}, {}
+
+	----------------------------------------------------------------
+	-- DONNÉES RP
+	----------------------------------------------------------------
+	local D = {
+		PING = "*lance un scan de la zone*",
+		REPLY = "*ses implants répondent au scan*",
+		CRASH_WORDS = { "grill", "surchauffe", "convuls", "crashout", "dysfonctionne", "surcharge" },
+		HACK_WORDS = { "pirat", "terminal", "obéit", "contrôle", "pare-feu", "virus", "branche", "signal", "grésill",
+			"secret", "connexion", "commandes", "synchronise", "satellite" },
+		CATEGORIES = { "Objet", "Véhicule", "Téléphone", "Ordi", "Drone", "Caméra", "Implant", "Autre" },
+		ITEMS = {
+			["Objet"] = { "Lampe", "Porte", "Caméra", "Distributeur", "Radio", "Ascenseur", "Alarme", "Barrière", "Écran pub", "Feux" },
+			["Véhicule"] = { "Moteur", "Freins", "GPS", "Portières", "Klaxon", "Phares", "Démarreur", "Pneus", "Direction",
+				"Coffre", "Radio", "Airbags", "Verrouillage", "Accélérateur" },
+			["Téléphone"] = { "Appels", "Messages", "Caméra", "Localisation", "Contacts", "Micro", "Batterie", "Photos" },
+			["Ordi"] = { "Fichiers", "Webcam", "Mots de passe", "Pare-feu", "Écran", "Disque dur", "Réseau", "Caméra" },
+			["Drone"] = { "Moteurs", "Caméra", "Pilote auto", "Radio", "Cible", "Batterie" },
+			["Caméra"] = { "Flux vidéo", "Rotation", "Enregistrement", "Vision nuit", "Alarme" },
+			["Implant"] = { "Vision", "Audio", "Bras cyber", "Jambes", "Interface", "Mémoire" },
+		},
+		-- {t} = pseudo de la cible, {i} = ce qu'on hack
+		RP = {
+			["Objet"] = {
+				"*sort son terminal et scanne {i} près de {t}*",
+				"*pianote rapidement, {i} de {t} se met à grésiller*",
+				"*{i} de {t} est sous son contrôle*",
+			},
+			["Véhicule"] = {
+				"*connecte son terminal au véhicule de {t}*",
+				"*contourne l'antivol, {i} du véhicule de {t} réagit bizarrement*",
+				"*{i} du véhicule de {t} lui obéit*",
+			},
+			["Téléphone"] = {
+				"*sort son terminal et cherche le signal du téléphone de {t}*",
+				"*injecte un virus, {i} du téléphone de {t} se met à bugger*",
+				"*{i} du téléphone de {t} est piraté*",
+			},
+			["Ordi"] = {
+				"*se branche discrètement sur l'ordinateur de {t}*",
+				"*casse le pare-feu, des lignes de code défilent vers {i}*",
+				"*{i} de l'ordinateur de {t} n'a plus de secret*",
+			},
+			["Drone"] = {
+				"*sort son terminal et cherche la fréquence du drone de {t}*",
+				"*injecte un virus, {i} du drone de {t} part en vrille*",
+				"*{i} du drone de {t} lui obéit*",
+			},
+			["Caméra"] = {
+				"*branche son terminal sur la caméra de {t}*",
+				"*contourne le pare-feu, {i} de la caméra de {t} se met à grésiller*",
+				"*{i} de la caméra de {t} est sous son contrôle*",
+			},
+			["Implant"] = {
+				"*se synchronise avec l'implant de {t} via son terminal*",
+				"*pianote vite, {i} de l'implant de {t} se met à grésiller*",
+				"*{i} de l'implant de {t} est piraté*",
+			},
+			["Autre"] = {
+				"*sort son terminal et cible {i} de {t}*",
+				"*pianote frénétiquement, {i} de {t} se met à bugger*",
+				"*{i} de {t} est piraté*",
+			},
+		},
+		REMOTE_RP = {
+			["Objet"] = {
+				"*ouvre une connexion à distance avec les objets autour de {t}*",
+				"*{i} près de {t} répond à ses commandes*",
+				"*{i} près de {t} lui obéit à distance*",
+			},
+			["Véhicule"] = {
+				"*ouvre une connexion à distance avec le véhicule de {t}*",
+				"*{i} du véhicule de {t} répond à ses commandes, sans qu'il s'approche*",
+				"*{i} du véhicule de {t} lui obéit à distance*",
+			},
+			["Téléphone"] = {
+				"*lance une connexion satellite vers le téléphone de {t}*",
+				"*{i} du téléphone de {t} répond à ses commandes*",
+				"*{i} du téléphone de {t} est piraté à distance*",
+			},
+			["Ordi"] = {
+				"*ouvre une connexion à distance vers l'ordinateur de {t}*",
+				"*{i} de l'ordinateur de {t} répond à ses commandes*",
+				"*{i} de l'ordinateur de {t} lui obéit à distance*",
+			},
+			["Drone"] = {
+				"*ouvre une connexion satellite avec le drone de {t}*",
+				"*{i} du drone de {t} répond à ses commandes*",
+				"*{i} du drone de {t} lui obéit à distance*",
+			},
+			["Caméra"] = {
+				"*ouvre une connexion à distance avec la caméra de {t}*",
+				"*{i} de la caméra de {t} répond à ses commandes*",
+				"*{i} de la caméra de {t} lui obéit à distance*",
+			},
+			["Implant"] = {
+				"*ouvre une connexion à distance avec l'implant de {t}*",
+				"*{i} de l'implant de {t} répond à ses commandes*",
+				"*{i} de l'implant de {t} est piraté à distance*",
+			},
+			["Autre"] = {
+				"*ouvre une connexion à distance avec {i} de {t}*",
+				"*{i} de {t} répond à ses commandes*",
+				"*{i} de {t} lui obéit à distance*",
+			},
+		},
+		-- {n} = nombre de cibles, {r} = rayon, {t} = nom de la cible
+		CRASH_RP = {
+			ZONE = {
+				"*sort son terminal et règle la fréquence sur la zone*",
+				"*lance un crashout, une onde de piratage traverse la zone*",
+				"*{n} cerveau(x) grillé(s) dans un rayon de {r}m, tout le monde est en surcharge*",
+			},
+			JOUEUR = {
+				"*pointe son terminal vers {t} et verrouille son implant*",
+				"*{t} se met à convulser, son implant surchauffe*",
+				"*le cerveau de {t} est complètement grillé*",
+			},
+			OBJET = {
+				"*pointe son terminal vers {t}*",
+				"*{t} grésille, ses circuits surchauffent*",
+				"*{t} est complètement grillé*",
+			},
+			AUTRE = {
+				"*sort son terminal et cible {t}*",
+				"*{t} se met à dysfonctionner, tout part en surcharge*",
+				"*{t} est complètement grillé*",
+			},
+		},
+	}
+	local function subst(s, map)
+		return (s:gsub("{(%a)}", function(k)
+			local v = map[k]
+			if v == nil then return nil end
+			return tostring(v)
+		end))
+	end
+
+	----------------------------------------------------------------
+	-- HELPERS UI
+	----------------------------------------------------------------
+	local function new(class, props, parent)
+		local o = Instance.new(class)
+		for k, v in pairs(props or {}) do o[k] = v end
+		if parent then o.Parent = parent end
+		return o
+	end
+	local function stroke(parent, color, thick, transp)
+		return new("UIStroke", {
+			Color = color, Thickness = thick or 1, Transparency = transp or 0,
+			ApplyStrokeMode = Enum.ApplyStrokeMode.Border,
+		}, parent)
+	end
+	local function label(parent, text, x, y, w, h, color, size, font, align)
+		return new("TextLabel", {
+			BackgroundTransparency = 1, Text = text, Position = UDim2.fromOffset(x, y),
+			Size = UDim2.fromOffset(w, h), TextColor3 = color or C.WHITE, TextSize = size or 13,
+			Font = font or Enum.Font.Code, TextXAlignment = align or Enum.TextXAlignment.Left,
+		}, parent)
+	end
+	local function icon(parent, ic, x, y, w, h, color, size)
+		if type(ic) == "string" and ic:find("rbxassetid") then
+			return new("ImageLabel", {
+				BackgroundTransparency = 1, Image = ic, ImageColor3 = color,
+				Position = UDim2.fromOffset(x, y), Size = UDim2.fromOffset(w, h),
+			}, parent)
+		end
+		return new("TextLabel", {
+			BackgroundTransparency = 1, Text = ic, TextColor3 = color, TextSize = size or 20,
+			Font = Enum.Font.GothamBold, Position = UDim2.fromOffset(x, y), Size = UDim2.fromOffset(w, h),
+		}, parent)
+	end
+	local function setIconColor(obj, color)
+		if obj:IsA("ImageLabel") then obj.ImageColor3 = color else obj.TextColor3 = color end
+	end
+	local function button(parent, text, x, y, w, h, color)
+		color = color or C.CYAN
+		local b = new("TextButton", {
+			Position = UDim2.fromOffset(x, y), Size = UDim2.fromOffset(w, h), BackgroundColor3 = C.PANEL2,
+			BorderSizePixel = 0, Text = text, TextColor3 = C.WHITE, Font = Enum.Font.Code, TextSize = 13,
+			AutoButtonColor = false,
+		}, parent)
+		local s = stroke(b, color, 1, 0.55)
+		table.insert(conns, b.MouseEnter:Connect(function() s.Transparency = 0 end))
+		table.insert(conns, b.MouseLeave:Connect(function() s.Transparency = 0.55 end))
+		return b
+	end
+	local function setSel(b, on, color)
+		b.BackgroundColor3 = on and C.PANEL2:Lerp(color, 0.45) or C.PANEL2
+	end
+	local function section(parent, text, x, y, w, color)
+		color = color or C.CYAN
+		label(parent, "▌" .. text, x, y, w, 16, color, 12)
+		new("Frame", {
+			BackgroundColor3 = color, BackgroundTransparency = 0.7, BorderSizePixel = 0,
+			Position = UDim2.fromOffset(x, y + 17), Size = UDim2.fromOffset(w, 1),
+		}, parent)
+	end
+	local function brackets(parent, color)
+		for _, c in ipairs({ { 0, 0 }, { 1, 0 }, { 0, 1 }, { 1, 1 } }) do
+			for _, sz in ipairs({ { 16, 2 }, { 2, 16 } }) do
+				new("Frame", {
+					BackgroundColor3 = color, BorderSizePixel = 0, AnchorPoint = Vector2.new(c[1], c[2]),
+					Position = UDim2.new(c[1], 0, c[2], 0), Size = UDim2.fromOffset(sz[1], sz[2]), ZIndex = 5,
+				}, parent)
+			end
+		end
+	end
+	local function billLabel(parent, yScale, hScale, size, color, text)
+		return new("TextLabel", {
+			Size = UDim2.new(1, 0, hScale, 0), Position = UDim2.fromScale(0, yScale), BackgroundTransparency = 1,
+			TextColor3 = color, TextStrokeTransparency = 0.35, Font = Enum.Font.Code, TextSize = size, Text = text,
+		}, parent)
+	end
+
+	----------------------------------------------------------------
+	-- FENÊTRE
+	----------------------------------------------------------------
+	local WIN_W, WIN_H = 580, 500
+	local pg = player:FindFirstChildOfClass("PlayerGui") or player:WaitForChild("PlayerGui", 5)
+	local gui = new("ScreenGui", {
+		Name = "CyberDeckUI", ResetOnSpawn = false, DisplayOrder = 1000, IgnoreGuiInset = true,
+		ZIndexBehavior = Enum.ZIndexBehavior.Sibling,
+	}, pg)
+
+	local vignette = new("Frame", { Size = UDim2.fromScale(1, 1), BackgroundTransparency = 1, Visible = false }, gui)
+	local vEdges = {}
+	for _, e in ipairs({
+		{ UDim2.fromScale(1, 0.16), UDim2.fromScale(0, 0), 90 },
+		{ UDim2.fromScale(1, 0.16), UDim2.fromScale(0, 0.84), 270 },
+		{ UDim2.fromScale(0.1, 1), UDim2.fromScale(0, 0), 0 },
+		{ UDim2.fromScale(0.1, 1), UDim2.fromScale(0.9, 0), 180 },
+	}) do
+		local f = new("Frame", {
+			Size = e[1], Position = e[2], BackgroundColor3 = Color3.fromRGB(255, 0, 30), BorderSizePixel = 0,
+		}, vignette)
+		new("UIGradient", {
+			Rotation = e[3],
+			Transparency = NumberSequence.new({ NumberSequenceKeypoint.new(0, 0.2), NumberSequenceKeypoint.new(1, 1) }),
+		}, f)
+		table.insert(vEdges, f)
+	end
+	local scanLine = new("Frame", {
+		Size = UDim2.new(1, 0, 0, 2), BackgroundColor3 = Color3.fromRGB(255, 30, 50),
+		BackgroundTransparency = 0.3, BorderSizePixel = 0, Visible = false,
+	}, vignette)
+
+	local lockLbl = new("TextLabel", {
+		Size = UDim2.fromOffset(300, 24), Position = UDim2.new(0.5, -150, 0, 30), BackgroundColor3 = Color3.fromRGB(6, 8, 12),
+		BackgroundTransparency = 0.2, BorderSizePixel = 0, Font = Enum.Font.Code, TextSize = 15, TextColor3 = C.RED,
+		Text = "", Visible = false,
+	}, gui)
+	stroke(lockLbl, C.RED, 1, 0)
+
+	local frame = new("Frame", {
+		Size = UDim2.fromOffset(WIN_W, WIN_H), Position = UDim2.new(1, -WIN_W - 20, 0, 50),
+		BackgroundColor3 = C.BG, BorderSizePixel = 0, ClipsDescendants = true,
+	}, gui)
+	local pages, statusLbl = {}, nil
+
+	do
+		local fstroke = stroke(frame, C.WHITE, 2, 0)
+		local fgrad = new("UIGradient", {
+			Color = ColorSequence.new({
+				ColorSequenceKeypoint.new(0, C.CYAN), ColorSequenceKeypoint.new(0.5, C.MAG), ColorSequenceKeypoint.new(1, C.CYAN),
+			}),
+		}, fstroke)
+		brackets(frame, C.YEL)
+		for i = 1, 13 do
+			new("Frame", {
+				BackgroundColor3 = C.CYAN, BackgroundTransparency = 0.95, BorderSizePixel = 0,
+				Position = UDim2.fromOffset(0, 56 + i * 32), Size = UDim2.new(1, 0, 0, 1),
+			}, frame)
+		end
+
+		local header = new("Frame", {
+			Size = UDim2.new(1, 0, 0, 48), BackgroundColor3 = C.PANEL, BorderSizePixel = 0, Active = true,
+		}, frame)
+		new("Frame", {
+			BackgroundColor3 = C.MAG, BorderSizePixel = 0, Position = UDim2.new(0, 0, 1, -2), Size = UDim2.new(1, 0, 0, 2),
+		}, header)
+
+		local logo = new("Frame", { BackgroundTransparency = 1, Position = UDim2.fromOffset(10, 6), Size = UDim2.fromOffset(36, 36) }, header)
+		local diamond = new("Frame", {
+			BackgroundColor3 = C.BG, Rotation = 45, Position = UDim2.fromOffset(6, 6), Size = UDim2.fromOffset(24, 24), BorderSizePixel = 0,
+		}, logo)
+		new("UIGradient", {
+			Color = ColorSequence.new({ ColorSequenceKeypoint.new(0, C.CYAN), ColorSequenceKeypoint.new(1, C.MAG) }),
+		}, stroke(diamond, C.CYAN, 2, 0))
+		icon(logo, ICONS.logo, 0, 0, 36, 36, C.CYAN, 20)
+
+		local titleLbl = label(header, "CYBERDECK", 54, 5, 260, 24, C.CYAN, 20, TITLE_FONT)
+		label(header, "// NETRUNNER OS v8.0", 56, 28, 260, 14, C.GREY, 11)
+		local statusDot = new("Frame", {
+			BackgroundColor3 = C.GREEN, Position = UDim2.new(1, -150, 0, 20), Size = UDim2.fromOffset(8, 8), BorderSizePixel = 0,
+		}, header)
+		label(header, "ONLINE", WIN_W - 138, 14, 60, 20, C.GREEN, 12)
+
+		local closeBtn = button(header, "✕", WIN_W - 38, 10, 28, 28, C.RED)
+		local minBtn = button(header, "—", WIN_W - 70, 10, 28, 28, C.YEL)
+
+		-- déplacement
+		local dragging, startPos, startInput
+		table.insert(conns, header.InputBegan:Connect(function(i)
+			if i.UserInputType == Enum.UserInputType.MouseButton1 or i.UserInputType == Enum.UserInputType.Touch then
+				dragging, startInput, startPos = true, i.Position, frame.Position
+			end
+		end))
+		table.insert(conns, UIS.InputChanged:Connect(function(i)
+			if dragging and (i.UserInputType == Enum.UserInputType.MouseMovement or i.UserInputType == Enum.UserInputType.Touch) then
+				local d = i.Position - startInput
+				frame.Position = UDim2.new(startPos.X.Scale, startPos.X.Offset + d.X, startPos.Y.Scale, startPos.Y.Offset + d.Y)
+			end
+		end))
+		table.insert(conns, UIS.InputEnded:Connect(function(i)
+			if i.UserInputType == Enum.UserInputType.MouseButton1 or i.UserInputType == Enum.UserInputType.Touch then
+				dragging = false
+			end
+		end))
+
+		local statusBar = new("Frame", {
+			Size = UDim2.new(1, 0, 0, 26), Position = UDim2.new(0, 0, 1, -26), BackgroundColor3 = C.PANEL, BorderSizePixel = 0,
+		}, frame)
+		statusLbl = label(statusBar, "> Système prêt", 10, 4, WIN_W - 20, 18, C.YEL, 13)
+
+		local floatBtn = new("TextButton", {
+			Text = "", Size = UDim2.fromOffset(46, 46), Position = UDim2.new(1, -56, 0, 2),
+			BackgroundColor3 = C.BG, BorderSizePixel = 0, AutoButtonColor = false,
+		}, gui)
+		stroke(floatBtn, C.CYAN, 2, 0)
+		icon(floatBtn, ICONS.logo, 0, 0, 46, 46, C.CYAN, 26)
+		table.insert(conns, floatBtn.MouseButton1Click:Connect(function() frame.Visible = not frame.Visible end))
+		table.insert(conns, closeBtn.MouseButton1Click:Connect(function() frame.Visible = false end))
+
+		local sidebar = new("Frame", {
+			Position = UDim2.fromOffset(0, 48), Size = UDim2.new(0, 76, 1, -74), BackgroundColor3 = C.PANEL, BorderSizePixel = 0,
+		}, frame)
+		local bodyElems = { sidebar, statusBar }
+		local minimized = false
+		table.insert(conns, minBtn.MouseButton1Click:Connect(function()
+			minimized = not minimized
+			frame.Size = UDim2.fromOffset(WIN_W, minimized and 48 or WIN_H)
+			for _, e in ipairs(bodyElems) do e.Visible = not minimized end
+		end))
+
+		local tabs = {}
+		local TABS = {
+			{ "SANDE", ICONS.sande, C.CYAN }, { "HACK", ICONS.hack, C.MAG }, { "SCAN", ICONS.scan, C.RED },
+			{ "NET", ICONS.net, C.GREEN }, { "CONFIG", ICONS.config, C.YEL },
+		}
+		local function showTab(name)
+			for n, p in pairs(pages) do p.Visible = (n == name) end
+			for n, t in pairs(tabs) do
+				local on = (n == name)
+				t.bar.Visible = on
+				t.btn.BackgroundColor3 = on and C.PANEL2 or C.PANEL
+				setIconColor(t.ic, on and t.color or C.GREY)
+				t.nm.TextColor3 = on and t.color or C.GREY
+			end
+		end
+		fn.showTab = showTab
+		for i, t in ipairs(TABS) do
+			local name, ic, color = t[1], t[2], t[3]
+			local btn = new("TextButton", {
+				Text = "", Position = UDim2.fromOffset(4, 8 + (i - 1) * 64), Size = UDim2.fromOffset(68, 58),
+				BackgroundColor3 = C.PANEL, BorderSizePixel = 0, AutoButtonColor = false,
+			}, sidebar)
+			local bar = new("Frame", { BackgroundColor3 = color, BorderSizePixel = 0, Size = UDim2.fromOffset(3, 58), Visible = false }, btn)
+			local icObj = icon(btn, ic, 0, 4, 68, 32, C.GREY, 24)
+			local nm = label(btn, name, 0, 38, 68, 14, C.GREY, 10, Enum.Font.Code, Enum.TextXAlignment.Center)
+			tabs[name] = { btn = btn, bar = bar, ic = icObj, nm = nm, color = color }
+			pages[name] = new("Frame", {
+				Position = UDim2.fromOffset(86, 58), Size = UDim2.fromOffset(WIN_W - 96, WIN_H - 92),
+				BackgroundTransparency = 1, Visible = false,
+			}, frame)
+			table.insert(bodyElems, pages[name])
+			table.insert(conns, btn.MouseButton1Click:Connect(function() showTab(name) end))
+		end
+
+		local scanOverlay = new("Frame", {
+			Size = UDim2.new(1, 0, 0, 2), BackgroundColor3 = C.CYAN, BackgroundTransparency = 0.88, BorderSizePixel = 0, ZIndex = 20,
+		}, frame)
+		table.insert(conns, RunService.Heartbeat:Connect(function()
+			local t = os.clock()
+			fgrad.Rotation = (t * 60) % 360
+			scanOverlay.Position = UDim2.fromOffset(0, (t * 110) % WIN_H)
+			statusDot.BackgroundTransparency = (math.floor(t * 2) % 2 == 0) and 0 or 0.6
+		end))
+		task.spawn(function()
+			local GL = { "▓", "▒", "░", "#", "@", "%", "$", "&" }
+			while gui.Parent do
+				task.wait(2 + math.random() * 3)
+				if not gui.Parent then break end
+				for _ = 1, 3 do
+					local s = {}
+					for i = 1, 9 do s[i] = (math.random() < 0.4) and GL[math.random(#GL)] or ("CYBERDECK"):sub(i, i) end
+					titleLbl.Text = table.concat(s)
+					titleLbl.TextColor3 = (math.random() < 0.5) and C.MAG or C.YEL
+					task.wait(0.05)
+				end
+				titleLbl.Text, titleLbl.TextColor3 = "CYBERDECK", C.CYAN
+			end
+		end)
+	end
+
+	local function setStatus(t, c)
+		statusLbl.Text = "> " .. t
+		statusLbl.TextColor3 = c or C.YEL
+	end
+
+	-- notifications
+	local holder = new("Frame", {
+		Size = UDim2.fromOffset(440, 220), Position = UDim2.new(0.5, -220, 0, 70), BackgroundTransparency = 1,
+	}, gui)
+	new("UIListLayout", { Padding = UDim.new(0, 4), HorizontalAlignment = Enum.HorizontalAlignment.Center }, holder)
+	local function toast(text, color, dur)
+		local l = new("TextLabel", {
+			Size = UDim2.fromOffset(430, 26), BackgroundColor3 = Color3.fromRGB(6, 8, 12), BackgroundTransparency = 0.2,
+			BorderSizePixel = 0, Font = Enum.Font.Code, TextSize = 14, TextColor3 = color, Text = text,
+		}, holder)
+		stroke(l, color, 1, 0)
+		Debris:AddItem(l, dur or 3)
+	end
+
+	----------------------------------------------------------------
+	-- OUTILS
+	----------------------------------------------------------------
+	local function track(o) table.insert(tempFx, o) return o end
+	local function cleanFx()
+		for _, o in ipairs(tempFx) do
+			if o and o.Parent then pcall(function() o:Destroy() end) end
+		end
+		table.clear(tempFx)
+	end
+	local function newFx(class, props) return track(new(class, props, Lighting)) end
+	local function getColor(t, offset)
+		if cfg.COLOR_MODE == "palette" then
+			local i = (math.floor(t * cfg.COLOR_SPEED * 3 + offset * #PALETTE) % #PALETTE) + 1
+			return PALETTE[i]
+		end
+		return Color3.fromHSV((t * cfg.COLOR_SPEED * 0.5 + offset) % 1, 0.9, 1)
+	end
+	local function chatSay(msg)
+		local sent = pcall(function()
+			if TextChatService.ChatVersion == Enum.ChatVersion.TextChatService then
+				local channels = TextChatService:WaitForChild("TextChannels", 3)
+				local ch = channels:FindFirstChild("RBXGeneral") or channels:FindFirstChildWhichIsA("TextChannel")
+				ch:SendAsync(msg)
+			else
+				ReplicatedStorage.DefaultChatSystemChatEvents.SayMessageRequest:FireServer(msg, "All")
+			end
+		end)
+		if not sent then warn("[CyberDeck] Envoi tchat impossible") end
+	end
+	local GLITCH = { "▓", "▒", "░", "#", "@", "%", "$", "&", "/", "0", "1" }
+	local function glitchString(n)
+		local t = {}
+		for i = 1, n do t[i] = GLITCH[math.random(#GLITCH)] end
+		return table.concat(t)
+	end
+	local function makeWave(origin, radius, color, duration)
+		local ring = new("Part", {
+			Shape = Enum.PartType.Cylinder, Size = Vector3.new(0.5, 2, 2),
+			CFrame = CFrame.new(origin - Vector3.new(0, 2.8, 0)) * CFrame.Angles(0, 0, math.pi / 2),
+			Anchored = true, CanCollide = false, CanQuery = false, CanTouch = false,
+			Material = Enum.Material.Neon, Color = color, Transparency = 0.4,
+		}, workspace)
+		TweenService:Create(ring, TweenInfo.new(duration, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {
+			Size = Vector3.new(0.5, radius * 2, radius * 2), Transparency = 1,
+		}):Play()
+		Debris:AddItem(ring, duration + 0.2)
+	end
+	local function clearScan()
+		for _, o in ipairs(scanObjects) do
+			if o and o.Parent then o:Destroy() end
+		end
+		table.clear(scanObjects)
+	end
+	local function distanceTo(plr)
+		local mine = player.Character and player.Character:FindFirstChild("HumanoidRootPart")
+		local theirs = plr.Character and plr.Character:FindFirstChild("HumanoidRootPart")
+		if mine and theirs then return (mine.Position - theirs.Position).Magnitude end
+	end
+	local function markCyber(plr)
+		if plr and plr ~= player and not cyber[plr] then
+			cyber[plr] = true
+			if fn.refreshTargets then fn.refreshTargets() end
+		end
+	end
+	local function setBar(frac, color)
+		if ui.sandBar then
+			ui.sandBar.Size = UDim2.new(math.clamp(frac, 0, 1), 0, 1, 0)
+			ui.sandBar.BackgroundColor3 = color
+		end
+	end
+
+	-- RAGDOLL
+	local function unragdoll()
+		local s = st.rag
+		if not s then return end
+		st.rag = nil
+		for _, o in ipairs(s.created) do
+			if o and o.Parent then pcall(function() o:Destroy() end) end
+		end
+		for _, m in ipairs(s.motors) do
+			pcall(function() if m[1] and m[1].Parent then m[1].Enabled = m[2] end end)
+		end
+		for _, p in ipairs(s.parts) do
+			pcall(function() if p[1] and p[1].Parent then p[1].CanCollide = p[2] end end)
+		end
+		pcall(function()
+			if s.hum and s.hum.Parent and s.hum.Health > 0 then
+				s.hum.PlatformStand = false
+				s.hum:ChangeState(Enum.HumanoidStateType.GettingUp)
+			end
+		end)
+	end
+	local function ragdoll(duration)
+		if st.rag then return end
+		local char = player.Character
+		local hum = char and char:FindFirstChildOfClass("Humanoid")
+		local root = char and char:FindFirstChild("HumanoidRootPart")
+		if not (hum and root) or hum.Health <= 0 then return end
+
+		local s = { hum = hum, motors = {}, created = {}, parts = {} }
+		st.rag = s
+		for _, m in ipairs(char:GetDescendants()) do
+			if m:IsA("Motor6D") and m.Part0 and m.Part1 and m.Part0 ~= root and m.Part1 ~= root then
+				local a0 = new("Attachment", { CFrame = m.C0 }, m.Part0)
+				local a1 = new("Attachment", { CFrame = m.C1 }, m.Part1)
+				local bs = new("BallSocketConstraint", {
+					Attachment0 = a0, Attachment1 = a1, LimitsEnabled = true, UpperAngle = 70,
+					TwistLimitsEnabled = true, TwistLowerAngle = -40, TwistUpperAngle = 40,
+				}, m.Part0)
+				table.insert(s.created, a0)
+				table.insert(s.created, a1)
+				table.insert(s.created, bs)
+				table.insert(s.motors, { m, m.Enabled })
+				m.Enabled = false
+				table.insert(s.parts, { m.Part1, m.Part1.CanCollide })
+				m.Part1.CanCollide = true
+			end
+		end
+		hum.PlatformStand = true
+		hum:ChangeState(Enum.HumanoidStateType.Physics)
+		root.AssemblyLinearVelocity = root.AssemblyLinearVelocity + Vector3.new((math.random() - 0.5) * 30, 25, (math.random() - 0.5) * 30)
+		root.AssemblyAngularVelocity = Vector3.new((math.random() - 0.5) * 10, (math.random() - 0.5) * 10, (math.random() - 0.5) * 10)
+
+		task.delay(duration, function() if st.rag == s then unragdoll() end end)
+		task.spawn(function()
+			while st.rag == s do
+				if not char.Parent or hum.Health <= 0 then unragdoll() break end
+				task.wait(0.2)
+			end
+		end)
+	end
+	fn.ragdoll = ragdoll
+
+	local function resetAll()
+		st.busy, st.picking, st.scanning, st.active = false, false, false, false
+		st.onCooldown, st.scanOnCooldown = false, false
+		if ui.loader then ui.loader.Visible = false end
+		vignette.Visible, scanLine.Visible = false, false
+		clearScan()
+		cleanFx()
+		unragdoll()
+		local hum = player.Character and player.Character:FindFirstChildOfClass("Humanoid")
+		if hum then hum.CameraOffset = Vector3.new(0, 0, 0) end
+		local ss = st.sandState
+		if ss then
+			pcall(function()
+				if ss.humanoid and ss.humanoid.Parent then ss.humanoid.WalkSpeed = ss.speed end
+				if ss.camera then ss.camera.FieldOfView = ss.fov end
+			end)
+			st.sandState = nil
+		end
+		setBar(0, C.GREY)
+		if ui.launch then ui.launch.Text = "▶ LANCER LE HACK" end
+		if ui.crashBtn then ui.crashBtn.Text = "☠ CRASHOUT" ui.crashBtn.BackgroundColor3 = C.PANEL2 end
+	end
+	local function guard(name, f)
+		return function(...)
+			local args = table.pack(...)
+			local ok2, e = pcall(function() f(table.unpack(args, 1, args.n)) end)
+			if not ok2 then
+				warn("[CyberDeck] erreur dans " .. name .. " : " .. tostring(e))
+				resetAll()
+				setStatus(("Erreur %s : %s"):format(name, tostring(e):sub(1, 70)), C.RED)
+			end
+		end
+	end
+	local function safe(name, f)
+		local ok2, e = pcall(f)
+		if not ok2 then
+			warn("[CyberDeck] chargement de " .. name .. " : " .. tostring(e))
+			setStatus(("Erreur chargement %s : %s"):format(name, tostring(e):sub(1, 60)), C.RED)
+		end
+	end
+
+	----------------------------------------------------------------
+	-- CHARGEMENT (barre en bas de l'écran) : utilisé par hack et crashout
+	----------------------------------------------------------------
+	local L = {}
+	safe("chargement", function()
+		local SEG = 24
+		local loader = new("Frame", {
+			Size = UDim2.fromOffset(460, 110), Position = UDim2.new(0.5, -230, 0.72, 0), BackgroundColor3 = Color3.fromRGB(3, 6, 8),
+			BackgroundTransparency = 0.12, BorderSizePixel = 0, Visible = false,
+		}, gui)
+		ui.loader = loader
+		L.stroke = stroke(loader, C.GREEN, 2, 0)
+		brackets(loader, C.YEL)
+		L.title = label(loader, "PIRATAGE", 14, 8, 430, 22, C.GREEN, 17, TITLE_FONT)
+		L.phase = label(loader, "", 14, 34, 430, 18, C.YEL, 13)
+		local pct = label(loader, "0%", 14, 82, 200, 20, C.WHITE, 14)
+		local noise = label(loader, "", 200, 82, 250, 20, Color3.fromRGB(80, 120, 90), 13, Enum.Font.Code, Enum.TextXAlignment.Right)
+		local segs = {}
+		local segW = (432 - (SEG - 1) * 3) / SEG
+		for i = 1, SEG do
+			segs[i] = new("Frame", {
+				Size = UDim2.fromOffset(segW, 18), Position = UDim2.fromOffset(14 + (i - 1) * (segW + 3), 58),
+				BackgroundColor3 = Color3.fromRGB(20, 35, 26), BorderSizePixel = 0,
+			}, loader)
+		end
+		L.setProgress = function(p)
+			local filled = math.floor(p / 100 * SEG)
+			for i, s in ipairs(segs) do
+				if i <= filled then
+					local k = i / SEG
+					s.BackgroundColor3 = (k < 0.6) and C.GREEN or ((k < 0.85) and C.YEL or C.RED)
+				else
+					s.BackgroundColor3 = Color3.fromRGB(20, 35, 26)
+				end
+			end
+			pct.Text = math.floor(p) .. "%"
+			noise.Text = glitchString(14)
+		end
+		L.flash = function(strong)
+			local cc = newFx("ColorCorrectionEffect", { TintColor = Color3.fromRGB(120, 255, 170), Contrast = strong and 0.35 or 0.15 })
+			local blur = newFx("BlurEffect", { Size = strong and 12 or 5 })
+			TweenService:Create(cc, TweenInfo.new(0.5), { TintColor = C.WHITE, Contrast = 0 }):Play()
+			TweenService:Create(blur, TweenInfo.new(0.5), { Size = 0 }):Play()
+			Debris:AddItem(cc, 0.7)
+			Debris:AddItem(blur, 0.7)
+		end
+		L.runPhases = function(phases, onPhase)
+			for idx, ph in ipairs(phases) do
+				L.phase.Text = "> " .. ph.name .. "..."
+				if onPhase then task.spawn(onPhase, idx) end
+				local t0 = os.clock()
+				while true do
+					local a = math.clamp((os.clock() - t0) / ph.time, 0, 1)
+					L.setProgress(ph.from + (ph.to - ph.from) * (a * a * (3 - 2 * a)))
+					if math.random() < 0.12 then
+						L.phase.Text = "> " .. glitchString(#ph.name)
+						task.wait(0.03)
+						L.phase.Text = "> " .. ph.name .. "..."
+					end
+					if a >= 1 then break end
+					task.wait(0.04)
+				end
+			end
+			L.setProgress(100)
+		end
+	end)
+
+	----------------------------------------------------------------
+	-- PAGE SANDE
+	----------------------------------------------------------------
+	safe("Sandevistan", function()
+		local pS = pages.SANDE
+		section(pS, " SANDEVISTAN", 0, 0, 484, C.CYAN)
+		local sandBtn = button(pS, "⚡  ACTIVER SANDEVISTAN", 0, 28, 484, 56, C.CYAN)
+		sandBtn.TextSize = 18
+		sandBtn.Font = TITLE_FONT
+		sandBtn.BackgroundColor3 = Color3.fromRGB(0, 70, 90)
+		label(pS, "Durée / recharge", 0, 94, 200, 14, C.GREY, 11)
+		local barBack = new("Frame", {
+			BackgroundColor3 = C.PANEL2, BorderSizePixel = 0, Position = UDim2.fromOffset(0, 112), Size = UDim2.fromOffset(484, 12),
+		}, pS)
+		stroke(barBack, C.CYAN, 1, 0.6)
+		ui.sandBar = new("Frame", { BackgroundColor3 = C.GREY, BorderSizePixel = 0, Size = UDim2.new(0, 0, 1, 0) }, barBack)
+
+		section(pS, " RACCOURCIS", 0, 142, 484, C.YEL)
+		local keyInfo = label(pS, "", 0, 164, 484, 40, C.GREY, 12)
+		keyInfo.TextWrapped = true
+		keyInfo.TextYAlignment = Enum.TextYAlignment.Top
+		fn.refreshKeyInfo = function()
+			keyInfo.Text = ("[%s] Sandevistan   [%s] Scan   [%s] Aimlock   [%s] Ouvrir/fermer le deck"):format(
+				keys.activate.Name, keys.scan.Name, keys.aim.Name, keys.menu.Name)
+		end
+		fn.refreshKeyInfo()
+
+		section(pS, " AIMLOCK", 0, 212, 484, C.RED)
+		local aimBtn = button(pS, "", 0, 234, 236, 30, C.RED)
+		local aimPartBtn = button(pS, "", 248, 234, 236, 30, C.RED)
+		fn.refreshAim = function()
+			aimBtn.Text = "🎯 AIMLOCK : " .. (cfg.AIMLOCK and "ON" or "OFF")
+			aimBtn.TextColor3 = cfg.AIMLOCK and C.GREEN or C.RED
+			aimPartBtn.Text = "Cible : " .. (cfg.AIM_HEAD and "TÊTE" or "TORSE")
+		end
+		fn.refreshAim()
+		table.insert(conns, aimBtn.MouseButton1Click:Connect(function() cfg.AIMLOCK = not cfg.AIMLOCK fn.refreshAim() end))
+		table.insert(conns, aimPartBtn.MouseButton1Click:Connect(function() cfg.AIM_HEAD = not cfg.AIM_HEAD fn.refreshAim() end))
+		local aimDesc = label(pS, "La caméra se verrouille en douceur sur le joueur le plus proche du centre de l'écran, uniquement quand le Sandevistan est actif ET que tu tiens un tool. Portée, vitesse, angle et murs se règlent dans CONFIG.", 0, 272, 484, 60, C.GREY, 12)
+		aimDesc.TextWrapped = true
+		aimDesc.TextYAlignment = Enum.TextYAlignment.Top
+		label(pS, "Effet Sandevistan : fantômes néon multicolores, flou, FOV élargi, vitesse x4.", 0, 340, 484, 30, C.GREY, 12).TextWrapped = true
+
+		local function spawnGhost(character, t)
+			local root = character:FindFirstChild("HumanoidRootPart")
+			local rootY = root and root.Position.Y or 0
+			for _, part in ipairs(character:GetDescendants()) do
+				if part:IsA("BasePart") and part.Name ~= "HumanoidRootPart" and part.Transparency < 1 then
+					local ok2, ghost = pcall(function() return part:Clone() end)
+					if ok2 and ghost then
+						ghost:ClearAllChildren()
+						ghost.Anchored, ghost.CanCollide, ghost.CanQuery, ghost.CanTouch, ghost.Massless = true, false, false, false, true
+						ghost.Material = Enum.Material.Neon
+						ghost.Color = getColor(t, ((part.Position.Y - rootY) * 0.08) % 1)
+						ghost.Transparency = 0.35
+						ghost.CFrame = part.CFrame
+						ghost.Parent = workspace
+						TweenService:Create(ghost, TweenInfo.new(0.35), { Transparency = 1 }):Play()
+						Debris:AddItem(ghost, 0.4)
+					end
+				end
+			end
+		end
+
+		fn.startSand = guard("Sandevistan", function()
+			if st.active or st.onCooldown then return end
+			local character = player.Character
+			local humanoid = character and character:FindFirstChildOfClass("Humanoid")
+			local camera = workspace.CurrentCamera
+			if not humanoid or not camera then setStatus("Perso introuvable", C.RED) return end
+
+			st.active = true
+			setStatus("SANDEVISTAN ACTIF !", C.CYAN)
+			local cc = newFx("ColorCorrectionEffect", {})
+			TweenService:Create(cc, TweenInfo.new(0.4), { Saturation = 0.3, Contrast = 0.2 }):Play()
+			local blur = newFx("BlurEffect", { Size = 0 })
+			TweenService:Create(blur, TweenInfo.new(0.4), { Size = 6 }):Play()
+
+			local ss = { humanoid = humanoid, speed = humanoid.WalkSpeed, camera = camera, fov = camera.FieldOfView }
+			st.sandState = ss
+			TweenService:Create(camera, TweenInfo.new(0.4), { FieldOfView = ss.fov + 20 }):Play()
+			humanoid.WalkSpeed = ss.speed * cfg.SPEED_MULT
+
+			local start = os.clock()
+			while os.clock() - start < cfg.DURATION and st.active do
+				if not character.Parent or humanoid.Health <= 0 then break end
+				local t = os.clock() - start
+				spawnGhost(character, t)
+				setBar(1 - t / cfg.DURATION, getColor(t, 0))
+				if cfg.SCREEN_TINT then cc.TintColor = C.WHITE:Lerp(getColor(t, 0), 0.35) end
+				task.wait(cfg.GHOST_RATE)
+			end
+
+			if st.sandState == ss then
+				if humanoid.Parent then humanoid.WalkSpeed = ss.speed end
+				TweenService:Create(camera, TweenInfo.new(0.4), { FieldOfView = ss.fov }):Play()
+				st.sandState = nil
+			end
+			TweenService:Create(blur, TweenInfo.new(0.4), { Size = 0 }):Play()
+			TweenService:Create(cc, TweenInfo.new(0.4), { Saturation = 0, TintColor = C.WHITE, Contrast = 0 }):Play()
+			Debris:AddItem(blur, 0.5)
+			Debris:AddItem(cc, 0.5)
+
+			st.active, st.onCooldown = false, true
+			local cd0 = os.clock()
+			while os.clock() - cd0 < cfg.COOLDOWN do
+				if not gui.Parent then return end
+				local left = cfg.COOLDOWN - (os.clock() - cd0)
+				setBar(1 - left / cfg.COOLDOWN, C.GREY)
+				setStatus(("Sandevistan recharge : %.1fs"):format(left))
+				task.wait(0.1)
+			end
+			st.onCooldown = false
+			setBar(0, C.GREY)
+			setStatus("Système prêt")
+		end)
+		table.insert(conns, sandBtn.MouseButton1Click:Connect(function() task.spawn(fn.startSand) end))
+	end)
+
+	----------------------------------------------------------------
+	-- AIMLOCK (Sandevistan actif + tool en main)
+	----------------------------------------------------------------
+	safe("Aimlock", function()
+		local aimTarget, aimRot, lastPick = nil, nil, 0
+		local function aimPart(plr)
+			local char = plr.Character
+			return char and char:FindFirstChild(cfg.AIM_HEAD and "Head" or "HumanoidRootPart")
+		end
+		local function isVisible(cam, part)
+			if not cfg.AIM_WALLCHECK then return true end
+			local params = RaycastParams.new()
+			params.FilterType = Enum.RaycastFilterType.Exclude
+			params.FilterDescendantsInstances = { player.Character }
+			local res = workspace:Raycast(cam.CFrame.Position, part.Position - cam.CFrame.Position, params)
+			return (not res) or res.Instance:IsDescendantOf(part.Parent)
+		end
+		local function validAim(cam, plr)
+			local part = aimPart(plr)
+			local hum = plr.Character and plr.Character:FindFirstChildOfClass("Humanoid")
+			if not part or not hum or hum.Health <= 0 then return nil end
+			if (part.Position - cam.CFrame.Position).Magnitude > cfg.AIM_RANGE then return nil end
+			if not isVisible(cam, part) then return nil end
+			return part
+		end
+		local function pickAim(cam)
+			local best, bestAng
+			for _, plr in ipairs(Players:GetPlayers()) do
+				if plr ~= player then
+					local part = validAim(cam, plr)
+					if part then
+						local dir = (part.Position - cam.CFrame.Position).Unit
+						local ang = math.deg(math.acos(math.clamp(cam.CFrame.LookVector:Dot(dir), -1, 1)))
+						if ang <= cfg.AIM_FOV and (not best or ang < bestAng) then best, bestAng = plr, ang end
+					end
+				end
+			end
+			return best
+		end
+
+		pcall(function() RunService:UnbindFromRenderStep("CyberDeckAim") end)
+		RunService:BindToRenderStep("CyberDeckAim", Enum.RenderPriority.Camera.Value + 1, function(dt)
+			local ok3 = pcall(function()
+				local cam = workspace.CurrentCamera
+				local char = player.Character
+				local tool = char and char:FindFirstChildOfClass("Tool")
+				if not (cfg.AIMLOCK and st.active and tool and cam) or st.rag then
+					aimTarget, aimRot = nil, nil
+					lockLbl.Visible = false
+					return
+				end
+				if aimTarget and not validAim(cam, aimTarget) then aimTarget, aimRot = nil, nil end
+				if not aimTarget and os.clock() - lastPick > 0.1 then
+					lastPick = os.clock()
+					aimTarget = pickAim(cam)
+				end
+				local part = aimTarget and aimPart(aimTarget)
+				if not part then lockLbl.Visible = false return end
+				local pos = cam.CFrame.Position
+				local goalRot = CFrame.lookAt(pos, part.Position).Rotation
+				local a = math.clamp(dt * cfg.AIM_SPEED, 0, 1)
+				aimRot = aimRot and aimRot:Lerp(goalRot, a) or cam.CFrame.Rotation
+				cam.CFrame = CFrame.new(pos) * aimRot
+				lockLbl.Visible = true
+				lockLbl.Text = ("🎯 LOCK : %s  [%dm]"):format(aimTarget.Name, math.floor((part.Position - pos).Magnitude))
+			end)
+			if not ok3 then aimTarget, aimRot = nil, nil end
+		end)
+		table.insert(conns, { Disconnect = function() pcall(function() RunService:UnbindFromRenderStep("CyberDeckAim") end) end })
+	end)
+
+	----------------------------------------------------------------
+	-- PAGE SCAN
+	----------------------------------------------------------------
+	safe("Scan", function()
+		local pC2 = pages.SCAN
+		section(pC2, " SCAN DE ZONE", 0, 0, 484, C.RED)
+		local scanBtn = button(pC2, "◎  LANCER LE SCAN", 0, 28, 484, 56, C.RED)
+		scanBtn.TextSize = 18
+		scanBtn.Font = TITLE_FONT
+		scanBtn.BackgroundColor3 = Color3.fromRGB(85, 10, 25)
+		local d = label(pC2, "Onde rouge qui part de toi. Chaque joueur touché garde son apparence avec un contour qui pulse, son pseudo, sa distance et un badge CYBERWARE s'il a le script.", 0, 96, 484, 60, C.GREY, 13)
+		d.TextWrapped = true
+		d.TextYAlignment = Enum.TextYAlignment.Top
+		section(pC2, " LÉGENDE", 0, 170, 484, C.YEL)
+		label(pC2, "■ contour rouge  = aucun implant", 0, 196, 484, 18, Color3.fromRGB(255, 110, 120), 13)
+		label(pC2, "■ contour cyan/magenta  = ⚡ CYBERWARE DÉTECTÉ", 0, 218, 484, 18, C.CYAN, 13)
+		label(pC2, "Au début du scan, ton perso envoie un signal dans le tchat. Les joueurs avec le script répondent après 1 à 2 s.", 0, 248, 484, 40, C.GREY, 12).TextWrapped = true
+
+		fn.startScan = guard("Scan", function()
+			if st.scanning or st.scanOnCooldown then return end
+			local myRoot = player.Character and player.Character:FindFirstChild("HumanoidRootPart")
+			if not myRoot then setStatus("Perso introuvable", C.RED) return end
+
+			st.scanning = true
+			if cfg.SEND_PING then task.spawn(chatSay, D.PING) end
+			local WAVE = 1.2
+			makeWave(myRoot.Position, cfg.SCAN_RADIUS, Color3.fromRGB(255, 30, 50), WAVE)
+
+			local marks = {}
+			for _, plr in ipairs(Players:GetPlayers()) do
+				if plr ~= player and plr.Character then
+					local root = plr.Character:FindFirstChild("HumanoidRootPart")
+					local head = plr.Character:FindFirstChild("Head")
+					local dist = root and (root.Position - myRoot.Position).Magnitude
+					if root and head and dist <= cfg.SCAN_RADIUS then
+						local hl = new("Highlight", {
+							FillColor = Color3.fromRGB(255, 0, 30), FillTransparency = 0.88, OutlineColor = C.RED,
+							DepthMode = Enum.HighlightDepthMode.AlwaysOnTop, Adornee = plr.Character, Enabled = false,
+						}, plr.Character)
+						table.insert(scanObjects, hl)
+						local bb = new("BillboardGui", {
+							Size = UDim2.fromOffset(220, 66), StudsOffset = Vector3.new(0, 3.6, 0), AlwaysOnTop = true,
+							Enabled = false, Adornee = head,
+						}, head)
+						table.insert(scanObjects, bb)
+						billLabel(bb, 0, 0.34, 16, Color3.fromRGB(255, 50, 70), "[ " .. plr.Name .. " ]")
+						table.insert(marks, {
+							plr = plr, root = root, hl = hl, bb = bb,
+							distL = billLabel(bb, 0.34, 0.3, 13, Color3.fromRGB(255, 160, 170), ""),
+							cyberL = billLabel(bb, 0.64, 0.36, 14, C.CYAN, ""),
+							appearAt = (dist / cfg.SCAN_RADIUS) * WAVE, shown = false,
+						})
+					end
+				end
+			end
+			setStatus((#marks == 0) and "Scan : personne à proximité" or ("SCAN : " .. #marks .. " cible(s)"), C.RED)
+
+			vignette.Visible, scanLine.Visible = true, true
+			task.spawn(function()
+				while st.scanning and gui.Parent do
+					scanLine.Position = UDim2.new(0, 0, 0, 0)
+					TweenService:Create(scanLine, TweenInfo.new(1.2, Enum.EasingStyle.Linear), { Position = UDim2.new(0, 0, 1, 0) }):Play()
+					task.wait(1.2)
+				end
+			end)
+
+			local start = os.clock()
+			while os.clock() - start < cfg.SCAN_DURATION and st.scanning do
+				local t = os.clock() - start
+				local pulse = 0.5 + 0.5 * math.sin(t * 6)
+				for _, f in ipairs(vEdges) do f.BackgroundTransparency = 0.15 + 0.35 * (1 - pulse) end
+				local cyberCount = 0
+				for _, m in ipairs(marks) do
+					if t >= m.appearAt then
+						if not m.shown then m.shown, m.hl.Enabled, m.bb.Enabled = true, true, true end
+						if cyber[m.plr] then
+							cyberCount += 1
+							m.hl.FillColor = Color3.fromRGB(0, 200, 255)
+							m.hl.FillTransparency = 0.75 + 0.15 * pulse
+							m.hl.OutlineColor = C.CYAN:Lerp(C.MAG, pulse)
+							m.cyberL.Text = "⚡ CYBERWARE DÉTECTÉ"
+							m.cyberL.TextColor3 = C.CYAN:Lerp(C.MAG, pulse)
+						else
+							m.hl.FillColor = Color3.fromRGB(255, 0, 30)
+							m.hl.FillTransparency = 0.8 + 0.15 * pulse
+							m.hl.OutlineColor = C.RED:Lerp(Color3.fromRGB(255, 190, 190), pulse * 0.5)
+							m.cyberL.Text = "aucun implant"
+							m.cyberL.TextColor3 = Color3.fromRGB(150, 110, 115)
+						end
+						if m.root.Parent and myRoot.Parent then
+							m.distL.Text = math.floor((m.root.Position - myRoot.Position).Magnitude) .. "m"
+						end
+					end
+				end
+				if #marks > 0 then setStatus(("SCAN : %d cible(s), %d cyberware"):format(#marks, cyberCount), C.RED) end
+				task.wait(0.05)
+			end
+
+			clearScan()
+			vignette.Visible, scanLine.Visible, st.scanning = false, false, false
+			st.scanOnCooldown = true
+			task.wait(cfg.SCAN_COOLDOWN)
+			st.scanOnCooldown = false
+			if not st.active and not st.onCooldown then setStatus("Système prêt") end
+		end)
+		table.insert(conns, scanBtn.MouseButton1Click:Connect(function() task.spawn(fn.startScan) end))
+	end)
+
+	----------------------------------------------------------------
+	-- PAGE HACK : choix + lancement
+	----------------------------------------------------------------
+	safe("Hack", function()
+		local pH = pages.HACK
+		section(pH, " TYPE", 0, 0, 484, C.MAG)
+		local catButtons, itemButtons = {}, {}
+		local itemList, customBox
+		local function rebuildItems()
+			for _, b in pairs(itemButtons) do b:Destroy() end
+			table.clear(itemButtons)
+			if st.cat == "Autre" then
+				itemList.Visible, customBox.Visible = false, true
+				return
+			end
+			customBox.Visible, itemList.Visible = false, true
+			for _, it in ipairs(D.ITEMS[st.cat] or {}) do
+				local b = new("TextButton", {
+					BackgroundColor3 = C.PANEL2, BorderSizePixel = 0, Text = it, TextColor3 = C.WHITE, Font = Enum.Font.Code,
+					TextSize = 11, TextScaled = true, AutoButtonColor = false,
+				}, itemList)
+				new("UITextSizeConstraint", { MaxTextSize = 12, MinTextSize = 8 }, b)
+				itemButtons[it] = b
+				table.insert(conns, b.MouseButton1Click:Connect(function()
+					st.item = it
+					for n, bb in pairs(itemButtons) do setSel(bb, n == it, C.GREEN) end
+				end))
+			end
+		end
+		for i, name in ipairs(D.CATEGORIES) do
+			local b = button(pH, name, ((i - 1) % 4) * 122, 22 + math.floor((i - 1) / 4) * 28, 118, 24, C.MAG)
+			catButtons[name] = b
+			table.insert(conns, b.MouseButton1Click:Connect(function()
+				st.cat, st.item = name, nil
+				for n, bb in pairs(catButtons) do setSel(bb, n == name, C.MAG) end
+				rebuildItems()
+			end))
+		end
+
+		section(pH, " QUOI HACKER", 0, 82, 236, C.GREEN)
+		section(pH, " CIBLE   (⚡ = cyberware)", 248, 82, 236, C.GREEN)
+		itemList = new("ScrollingFrame", {
+			Position = UDim2.fromOffset(0, 104), Size = UDim2.fromOffset(236, 84), BackgroundColor3 = C.PANEL,
+			BorderSizePixel = 0, ScrollBarThickness = 3, AutomaticCanvasSize = Enum.AutomaticSize.Y,
+			CanvasSize = UDim2.new(), Visible = false,
+		}, pH)
+		new("UIGridLayout", { CellSize = UDim2.fromOffset(72, 24), CellPadding = UDim2.fromOffset(4, 4) }, itemList)
+		customBox = new("TextBox", {
+			Position = UDim2.fromOffset(0, 104), Size = UDim2.fromOffset(236, 28), BackgroundColor3 = C.PANEL2, BorderSizePixel = 0,
+			PlaceholderText = "écris ce que tu veux hacker...", PlaceholderColor3 = C.GREY, Text = "", TextColor3 = C.WHITE,
+			Font = Enum.Font.Code, TextSize = 12, ClearTextOnFocus = false, Visible = false,
+		}, pH)
+
+		local plist = new("ScrollingFrame", {
+			Position = UDim2.fromOffset(248, 104), Size = UDim2.fromOffset(236, 84), BackgroundColor3 = C.PANEL,
+			BorderSizePixel = 0, ScrollBarThickness = 3, AutomaticCanvasSize = Enum.AutomaticSize.Y, CanvasSize = UDim2.new(),
+		}, pH)
+		new("UIListLayout", { Padding = UDim.new(0, 2) }, plist)
+		local playerButtons = {}
+		local function playerText(plr)
+			return " " .. plr.Name .. (plr == player and "  (toi)" or "") .. (cyber[plr] and "  ⚡" or "")
+		end
+		fn.refreshTargets = function()
+			for plr, b in pairs(playerButtons) do
+				b.Text = playerText(plr)
+				setSel(b, plr == st.target, C.RED)
+			end
+		end
+		local function addPlayer(plr)
+			if playerButtons[plr] then return end
+			local b = new("TextButton", {
+				Size = UDim2.new(1, -6, 0, 22), BackgroundColor3 = C.PANEL2, BorderSizePixel = 0, Text = playerText(plr),
+				TextXAlignment = Enum.TextXAlignment.Left, TextColor3 = C.WHITE, Font = Enum.Font.Code, TextSize = 12,
+				AutoButtonColor = false,
+			}, plist)
+			playerButtons[plr] = b
+			table.insert(conns, b.MouseButton1Click:Connect(function()
+				st.target = plr
+				fn.refreshTargets()
+			end))
+		end
+		for _, p in ipairs(Players:GetPlayers()) do addPlayer(p) end
+		table.insert(conns, Players.PlayerAdded:Connect(addPlayer))
+		table.insert(conns, Players.PlayerRemoving:Connect(function(plr)
+			if playerButtons[plr] then playerButtons[plr]:Destroy() playerButtons[plr] = nil end
+			if st.target == plr then st.target = nil end
+			cyber[plr] = nil
+		end))
+
+		local rpBtn = button(pH, "RP : ON", 0, 194, 106, 34, C.GREEN)
+		rpBtn.TextColor3 = C.GREEN
+		table.insert(conns, rpBtn.MouseButton1Click:Connect(function()
+			st.rpEnabled = not st.rpEnabled
+			rpBtn.Text = "RP : " .. (st.rpEnabled and "ON" or "OFF")
+			rpBtn.TextColor3 = st.rpEnabled and C.GREEN or C.RED
+		end))
+		local remoteBtn = button(pH, "DISTANCE : OFF", 112, 194, 130, 34, C.CYAN)
+		remoteBtn.TextColor3 = C.GREY
+		table.insert(conns, remoteBtn.MouseButton1Click:Connect(function()
+			st.remote = not st.remote
+			remoteBtn.Text = "DISTANCE : " .. (st.remote and "ON" or "OFF")
+			remoteBtn.TextColor3 = st.remote and C.CYAN or C.GREY
+		end))
+		local launch = button(pH, "▶ LANCER LE HACK", 248, 194, 236, 34, C.GREEN)
+		launch.Font = TITLE_FONT
+		launch.TextSize = 15
+		launch.BackgroundColor3 = Color3.fromRGB(0, 80, 45)
+		ui.launch = launch
+
+		local PHASES = {
+			{ name = "Connexion au réseau", from = 0, to = 22, time = 1.6 },
+			{ name = "Contournement du pare-feu", from = 22, to = 55, time = 2.2 },
+			{ name = "Injection du code", from = 55, to = 88, time = 2.2 },
+			{ name = "Prise de contrôle", from = 88, to = 100, time = 1.2 },
+		}
+		local REMOTE_PHASES = {
+			{ name = "Liaison satellite", from = 0, to = 22, time = 1.6 },
+			{ name = "Triangulation de la cible", from = 22, to = 55, time = 2.2 },
+			{ name = "Injection du code à distance", from = 55, to = 88, time = 2.2 },
+			{ name = "Prise de contrôle", from = 88, to = 100, time = 1.2 },
+		}
+
+		local runHack = guard("Hack", function()
+			if st.busy then return end
+			if not st.cat then setStatus("Choisis un type !", C.RED) return end
+			local item = st.item
+			if st.cat == "Autre" then
+				local txt = customBox.Text:gsub("[<>]", "")
+				item = (txt ~= "") and txt or nil
+			end
+			if not item then setStatus("Choisis quoi hacker !", C.RED) return end
+			if not st.target then setStatus("Choisis un joueur !", C.RED) return end
+
+			local name = st.target.Name
+			local lines = st.remote and D.REMOTE_RP[st.cat] or D.RP[st.cat]
+			st.busy = true
+			launch.Text = "… HACK EN COURS …"
+			setStatus("Hack en cours...", C.GREEN)
+			L.title.Text = ("PIRATAGE%s : %s (%s) > %s"):format(st.remote and " À DISTANCE" or "", item:upper(), st.cat:upper(), name)
+			L.title.TextColor3, L.stroke.Color = C.GREEN, C.GREEN
+			L.setProgress(0)
+			ui.loader.Visible = true
+			task.spawn(L.flash, false)
+
+			local function rp(i)
+				if st.rpEnabled then chatSay(subst(lines[i], { t = name, i = item:lower() })) end
+			end
+			L.runPhases(st.remote and REMOTE_PHASES or PHASES, function(idx)
+				if idx == 1 then rp(1) elseif idx == 3 then rp(2) end
+			end)
+			L.phase.Text, L.phase.TextColor3 = "> ACCÈS ACCORDÉ", C.GREEN
+			task.spawn(L.flash, true)
+			task.spawn(rp, 3)
+			task.wait(1.4)
+			ui.loader.Visible = false
+			L.phase.TextColor3 = C.YEL
+			setStatus(item .. " → " .. name .. " ✔", C.GREEN)
+			launch.Text = "▶ LANCER LE HACK"
+			st.busy = false
+		end)
+		table.insert(conns, launch.MouseButton1Click:Connect(function() task.spawn(runHack) end))
+	end)
+
+	----------------------------------------------------------------
+	-- PAGE HACK : crashout (verrouillé par code)
+	----------------------------------------------------------------
+	safe("Crashout", function()
+		local pH = pages.HACK
+		section(pH, " CRASHOUT", 0, 238, 484, C.RED)
+		local MODES = { "ZONE", "JOUEUR", "OBJET", "AUTRE" }
+		local modeButtons = {}
+		local crashInfo, nameBox
+
+		fn.refreshCrashInfo = function()
+			if st.crashMode == "ZONE" then crashInfo.Text = ("Tous les joueurs à moins de %dm"):format(cfg.CRASH_RADIUS)
+			elseif st.crashMode == "JOUEUR" then crashInfo.Text = "Le joueur choisi dans la liste CIBLE"
+			elseif st.crashMode == "OBJET" then crashInfo.Text = "Clique ensuite sur l'objet dans le jeu"
+			else crashInfo.Text = "" end
+			nameBox.Visible = (st.crashMode == "AUTRE")
+			crashInfo.Visible = not nameBox.Visible
+			for n, b in pairs(modeButtons) do setSel(b, n == st.crashMode, C.RED) end
+		end
+		for i, m in ipairs(MODES) do
+			local b = button(pH, m, (i - 1) * 122, 260, 118, 24, C.RED)
+			b.TextSize = 12
+			modeButtons[m] = b
+			table.insert(conns, b.MouseButton1Click:Connect(function()
+				st.crashMode, st.picking = m, false
+				fn.refreshCrashInfo()
+			end))
+		end
+		crashInfo = label(pH, "", 0, 290, 484, 18, C.GREY, 12)
+		nameBox = new("TextBox", {
+			Position = UDim2.fromOffset(0, 290), Size = UDim2.fromOffset(484, 20), BackgroundColor3 = C.PANEL2, BorderSizePixel = 0,
+			PlaceholderText = "nom de la cible (ex: le réseau), puis clique dans le jeu", PlaceholderColor3 = C.GREY,
+			Text = "", TextColor3 = C.WHITE, Font = Enum.Font.Code, TextSize = 12, ClearTextOnFocus = false, Visible = false,
+		}, pH)
+		local crashBtn = button(pH, "☠ CRASHOUT", 0, 316, 484, 40, C.RED)
+		crashBtn.Font = TITLE_FONT
+		crashBtn.TextSize = 17
+		ui.crashBtn = crashBtn
+		fn.refreshCrashInfo()
+
+		-- verrou
+		local lock = new("Frame", {
+			Position = UDim2.fromOffset(0, 234), Size = UDim2.fromOffset(484, 130), BackgroundColor3 = C.BG,
+			BorderSizePixel = 0, Active = true, ZIndex = 10,
+		}, pH)
+		stroke(lock, C.RED, 1, 0.3)
+		label(lock, "🔒  CRASHOUT VERROUILLÉ", 0, 10, 484, 24, C.RED, 17, TITLE_FONT, Enum.TextXAlignment.Center)
+		label(lock, "Entre le code d'accès pour débloquer", 0, 36, 484, 16, C.GREY, 12, Enum.Font.Code, Enum.TextXAlignment.Center)
+		local codeBox = new("TextBox", {
+			Position = UDim2.fromOffset(92, 62), Size = UDim2.fromOffset(300, 28), BackgroundColor3 = C.PANEL2, BorderSizePixel = 0,
+			PlaceholderText = "code d'accès...", PlaceholderColor3 = C.GREY, Text = "", TextColor3 = C.YEL,
+			Font = Enum.Font.Code, TextSize = 14, ClearTextOnFocus = false, ZIndex = 11,
+		}, lock)
+		stroke(codeBox, C.YEL, 1, 0.5)
+		local unlockBtn = button(lock, "DÉVERROUILLER", 92, 96, 300, 28, C.RED)
+		unlockBtn.ZIndex = 11
+		local function tryUnlock()
+			if codeBox.Text:match("^%s*(.-)%s*$") == CRASH_CODE then
+				st.crashUnlocked = true
+				lock.Visible = false
+				setStatus("Crashout déverrouillé", C.GREEN)
+				toast("🔓 CRASHOUT DÉVERROUILLÉ", C.GREEN, 3)
+			else
+				codeBox.Text = ""
+				setStatus("Code invalide", C.RED)
+				toast("⛔ ACCÈS REFUSÉ", C.RED, 2)
+			end
+		end
+		table.insert(conns, unlockBtn.MouseButton1Click:Connect(tryUnlock))
+		table.insert(conns, codeBox.FocusLost:Connect(function(enter) if enter then tryUnlock() end end))
+
+		local CRASH_PHASES = {
+			{ name = "Ciblage des implants neuronaux", from = 0, to = 25, time = 1.4 },
+			{ name = "Surcharge du cortex", from = 25, to = 60, time = 1.8 },
+			{ name = "Cascade de défaillances", from = 60, to = 92, time = 1.8 },
+			{ name = "CRASHOUT", from = 92, to = 100, time = 0.8 },
+		}
+
+		local function applyCrash(targets, center, waveRadius)
+			local humanoid = player.Character and player.Character:FindFirstChildOfClass("Humanoid")
+			makeWave(center, waveRadius, C.MAG, 1.0)
+			task.delay(0.25, function() makeWave(center, waveRadius, C.RED, 1.0) end)
+
+			local cc = newFx("ColorCorrectionEffect", { TintColor = Color3.fromRGB(255, 80, 120), Contrast = 0.35, Saturation = 0.4 })
+			local blur = newFx("BlurEffect", { Size = 10 })
+			vignette.Visible = true
+
+			local fx = {}
+			for _, tg in ipairs(targets) do
+				if tg.adornee and tg.adornee.Parent and tg.anchor then
+					local hl = track(new("Highlight", {
+						FillColor = C.RED, FillTransparency = 0.4, OutlineColor = C.WHITE,
+						DepthMode = Enum.HighlightDepthMode.AlwaysOnTop, Adornee = tg.adornee,
+					}, tg.adornee))
+					local bb = track(new("BillboardGui", {
+						Size = UDim2.fromOffset(220, 50), StudsOffset = Vector3.new(0, 3.2, 0), AlwaysOnTop = true, Adornee = tg.anchor,
+					}, tg.anchor))
+					local l1 = billLabel(bb, 0, 0.55, 16, C.RED, "")
+					billLabel(bb, 0.55, 0.45, 13, Color3.fromRGB(255, 200, 210), tg.name)
+					track(new("ParticleEmitter", {
+						Rate = 40, Lifetime = NumberRange.new(0.5, 1), Speed = NumberRange.new(4, 8),
+						SpreadAngle = Vector2.new(180, 180), LightEmission = 1, Color = ColorSequence.new(C.RED),
+						Size = NumberSequence.new(0.4, 0),
+					}, tg.anchor))
+					table.insert(fx, { hl = hl, l1 = l1 })
+				end
+			end
+
+			local t0 = os.clock()
+			while os.clock() - t0 < cfg.CRASH_DURATION do
+				local alt = math.random() < 0.5
+				for _, f in ipairs(fx) do
+					if f.hl.Parent then
+						f.hl.FillColor = alt and C.RED or C.WHITE
+						f.hl.FillTransparency = 0.2 + 0.5 * math.random()
+						f.l1.Text = (math.random() < 0.3) and glitchString(10) or "⚠ CRASHOUT ⚠"
+					end
+				end
+				for _, e in ipairs(vEdges) do e.BackgroundTransparency = math.random() * 0.5 end
+				cc.TintColor = alt and Color3.fromRGB(255, 60, 100) or Color3.fromRGB(255, 200, 220)
+				blur.Size = 3 + math.random() * 9
+				if humanoid and humanoid.Parent then
+					humanoid.CameraOffset = Vector3.new((math.random() - 0.5) * 0.5, (math.random() - 0.5) * 0.5, 0)
+				end
+				task.wait(0.07)
+			end
+			if humanoid and humanoid.Parent then humanoid.CameraOffset = Vector3.new(0, 0, 0) end
+			vignette.Visible = false
+			TweenService:Create(cc, TweenInfo.new(0.5), { TintColor = C.WHITE, Contrast = 0, Saturation = 0 }):Play()
+			TweenService:Create(blur, TweenInfo.new(0.5), { Size = 0 }):Play()
+			Debris:AddItem(cc, 0.7)
+			Debris:AddItem(blur, 0.7)
+			task.delay(0.1, cleanFx)
+		end
+
+		local function resetCrashBtn()
+			crashBtn.Text, crashBtn.BackgroundColor3 = "☠ CRASHOUT", C.PANEL2
+		end
+
+		local launchCrash = guard("Crashout", function(targets, center, waveRadius, mode, displayName, title)
+			st.busy = true
+			crashBtn.Text = "… CRASHOUT EN COURS …"
+			setStatus("Crashout en cours...", C.MAG)
+			L.title.Text = title
+			L.title.TextColor3, L.stroke.Color = C.MAG, C.MAG
+			L.setProgress(0)
+			ui.loader.Visible = true
+			task.spawn(L.flash, false)
+
+			local function rp(i)
+				if not st.rpEnabled then return end
+				chatSay(subst(D.CRASH_RP[mode][i], { n = #targets, r = cfg.CRASH_RADIUS, t = displayName }))
+			end
+			L.runPhases(CRASH_PHASES, function(idx)
+				if idx == 1 then rp(1) elseif idx == 3 then rp(2) end
+			end)
+			L.phase.Text, L.phase.TextColor3 = "> SURCHARGE TOTALE", C.RED
+			task.spawn(rp, 3)
+			task.wait(0.3)
+			ui.loader.Visible = false
+			L.phase.TextColor3 = C.YEL
+			applyCrash(targets, center, waveRadius)
+			setStatus("Crashout : " .. displayName .. " grillé ✔", C.MAG)
+			resetCrashBtn()
+			st.busy = false
+		end)
+
+		local function charTarget(plr)
+			local char = plr.Character
+			local head = char and char:FindFirstChild("Head")
+			if char and head then return { name = plr.Name, adornee = char, anchor = head } end
+		end
+
+		local runCrashout = guard("Crashout", function()
+			if not st.crashUnlocked then setStatus("Crashout verrouillé : entre le code", C.RED) return end
+			if st.busy or st.picking then return end
+			local myRoot = player.Character and player.Character:FindFirstChild("HumanoidRootPart")
+			if not myRoot then setStatus("Perso introuvable", C.RED) return end
+
+			if st.crashMode == "ZONE" then
+				local targets = {}
+				for _, plr in ipairs(Players:GetPlayers()) do
+					if plr ~= player and plr.Character then
+						local root = plr.Character:FindFirstChild("HumanoidRootPart")
+						if root and (root.Position - myRoot.Position).Magnitude <= cfg.CRASH_RADIUS then
+							local tg = charTarget(plr)
+							if tg then table.insert(targets, tg) end
+						end
+					end
+				end
+				if #targets == 0 then setStatus("Crashout : personne dans la zone", C.RED) return end
+				launchCrash(targets, myRoot.Position, cfg.CRASH_RADIUS, "ZONE", "la zone",
+					("CRASHOUT : %d cible(s) dans %dm"):format(#targets, cfg.CRASH_RADIUS))
+			elseif st.crashMode == "JOUEUR" then
+				if not st.target then setStatus("Choisis un joueur dans la liste CIBLE !", C.RED) return end
+				local tg = charTarget(st.target)
+				if not tg then setStatus("Joueur introuvable", C.RED) return end
+				launchCrash({ tg }, tg.anchor.Position, 15, "JOUEUR", tg.name, "CRASHOUT : " .. tg.name:upper())
+			else
+				if st.crashMode == "AUTRE" and nameBox.Text:gsub("[<>%s]", "") == "" then
+					setStatus("Écris le nom de la cible !", C.RED)
+					return
+				end
+				st.picking = true
+				crashBtn.Text, crashBtn.BackgroundColor3 = "⌖ CLIQUE SUR LA CIBLE...", Color3.fromRGB(150, 90, 0)
+				setStatus("Clique sur la cible dans le jeu (15s)", C.YEL)
+				task.delay(15, function()
+					if st.picking then
+						st.picking = false
+						resetCrashBtn()
+						setStatus("Sélection annulée")
+					end
+				end)
+			end
+		end)
+		table.insert(conns, crashBtn.MouseButton1Click:Connect(function() task.spawn(runCrashout) end))
+
+		local mouse = player:GetMouse()
+		local onPick = guard("Sélection", function(input, gameProcessed)
+			if not st.picking or gameProcessed then return end
+			if input.UserInputType ~= Enum.UserInputType.MouseButton1 then return end
+			st.picking = false
+			local hitPart, hitPos = mouse.Target, mouse.Hit.Position
+
+			if st.crashMode == "OBJET" then
+				local myChar = player.Character
+				if not hitPart or hitPart:IsA("Terrain") or (myChar and hitPart:IsDescendantOf(myChar)) then
+					resetCrashBtn()
+					setStatus("Aucun objet valide", C.RED)
+					return
+				end
+				local model = hitPart:FindFirstAncestorOfClass("Model")
+				local obj = model or hitPart
+				local anchor = obj:IsA("BasePart") and obj or obj:FindFirstChildWhichIsA("BasePart", true)
+				if not anchor then
+					resetCrashBtn()
+					setStatus("Objet invalide", C.RED)
+					return
+				end
+				task.spawn(launchCrash, { { name = obj.Name, adornee = obj, anchor = anchor } },
+					anchor.Position, 12, "OBJET", obj.Name, "CRASHOUT : " .. obj.Name:upper())
+			else
+				local lbl = nameBox.Text:gsub("[<>]", "")
+				local dummy = track(new("Part", {
+					Size = Vector3.new(1, 1, 1), Transparency = 1, Anchored = true, CanCollide = false, CanQuery = false,
+					CanTouch = false, Position = hitPos + Vector3.new(0, 2, 0),
+				}, workspace))
+				task.spawn(launchCrash, { { name = lbl, adornee = dummy, anchor = dummy } },
+					dummy.Position, 12, "AUTRE", lbl, "CRASHOUT : " .. lbl:upper())
+			end
+		end)
+		table.insert(conns, UIS.InputBegan:Connect(onPick))
+	end)
+
+	----------------------------------------------------------------
+	-- PAGE NET
+	----------------------------------------------------------------
+	safe("Net", function()
+		local pN = pages.NET
+		section(pN, " RÉSEAU", 0, 0, 484, C.GREEN)
+		local function toggleBtn(text, key, x, y, w)
+			local b = button(pN, "", x, y, w, 28, C.GREEN)
+			local function upd()
+				b.Text = text .. " : " .. (cfg[key] and "ON" or "OFF")
+				b.TextColor3 = cfg[key] and C.GREEN or C.RED
+			end
+			upd()
+			table.insert(conns, b.MouseButton1Click:Connect(function() cfg[key] = not cfg[key] upd() end))
+		end
+		toggleBtn("Subir les effets", "RECEIVE_EFFECTS", 0, 24, 236)
+		toggleBtn("Répondre aux scans", "REPLY_TO_SCAN", 248, 24, 236)
+		toggleBtn("Détection Sandevistan", "DETECT_SANDE", 0, 58, 236)
+		toggleBtn("Ping au scan", "SEND_PING", 248, 58, 236)
+		toggleBtn("Ragdoll si crashout", "RAGDOLL", 0, 92, 236)
+
+		section(pN, " JOUEURS DÉTECTÉS", 0, 132, 484, C.CYAN)
+		local netList = new("ScrollingFrame", {
+			Position = UDim2.fromOffset(0, 156), Size = UDim2.fromOffset(484, 206), BackgroundColor3 = C.PANEL, BorderSizePixel = 0,
+			ScrollBarThickness = 3, AutomaticCanvasSize = Enum.AutomaticSize.Y, CanvasSize = UDim2.new(),
+		}, pN)
+		new("UIListLayout", { Padding = UDim.new(0, 3) }, netList)
+		local lastSig = ""
+		task.spawn(function()
+			while gui.Parent do
+				local rows, sig = {}, {}
+				for _, plr in ipairs(Players:GetPlayers()) do
+					if plr ~= player then
+						local s = det[plr]
+						local fast = s and s.on
+						if cyber[plr] or fast then
+							local txt = "  ⚡ " .. plr.Name .. (cyber[plr] and "   [CYBERWARE]" or "") ..
+								(fast and ("   [SANDEVISTAN " .. math.floor(s.speed or 0) .. "]") or "")
+							table.insert(rows, { txt = txt, fast = fast })
+							table.insert(sig, txt)
+						end
+					end
+				end
+				local key = table.concat(sig, "|")
+				if key ~= lastSig then
+					lastSig = key
+					for _, c in ipairs(netList:GetChildren()) do
+						if c:IsA("TextLabel") then c:Destroy() end
+					end
+					if #rows == 0 then
+						new("TextLabel", {
+							Size = UDim2.new(1, -6, 0, 22), BackgroundTransparency = 1, Text = "  Aucun joueur détecté", TextColor3 = C.GREY,
+							Font = Enum.Font.Code, TextSize = 12, TextXAlignment = Enum.TextXAlignment.Left,
+						}, netList)
+					end
+					for _, r in ipairs(rows) do
+						new("TextLabel", {
+							Size = UDim2.new(1, -6, 0, 22), BackgroundColor3 = C.PANEL2, BorderSizePixel = 0, Text = r.txt,
+							TextColor3 = r.fast and C.MAG or C.CYAN, Font = Enum.Font.Code, TextSize = 12,
+							TextXAlignment = Enum.TextXAlignment.Left,
+						}, netList)
+					end
+				end
+				task.wait(0.5)
+			end
+		end)
+	end)
+
+	----------------------------------------------------------------
+	-- EFFETS SUBIS + TCHAT (réception des signaux)
+	----------------------------------------------------------------
+	safe("Réception", function()
+		local receiving = false
+		local function glitchHit(sender)
+			toast("⚠ INTRUSION DÉTECTÉE : " .. sender.Name, C.GREEN, 3)
+			local cc = newFx("ColorCorrectionEffect", { TintColor = Color3.fromRGB(120, 255, 170), Contrast = 0.3 })
+			local blur = newFx("BlurEffect", { Size = 8 })
+			TweenService:Create(cc, TweenInfo.new(0.7), { TintColor = C.WHITE, Contrast = 0 }):Play()
+			TweenService:Create(blur, TweenInfo.new(0.7), { Size = 0 }):Play()
+			Debris:AddItem(cc, 1)
+			Debris:AddItem(blur, 1)
+		end
+		local function crashHit(sender)
+			if receiving then return end
+			receiving = true
+			toast("⚠ CRASHOUT : surcharge neuronale (" .. sender.Name .. ")", C.RED, 5)
+			if cfg.RAGDOLL then
+				local ok4, e4 = pcall(ragdoll, cfg.RAGDOLL_TIME)
+				if not ok4 then warn("[CyberDeck] ragdoll : " .. tostring(e4)) end
+			end
+			local hum = player.Character and player.Character:FindFirstChildOfClass("Humanoid")
+			local cc = newFx("ColorCorrectionEffect", { TintColor = Color3.fromRGB(255, 80, 120), Contrast = 0.35, Saturation = 0.4 })
+			local blur = newFx("BlurEffect", { Size = 10 })
+			vignette.Visible = true
+			pcall(function()
+				local t0 = os.clock()
+				while os.clock() - t0 < cfg.CRASH_DURATION and gui.Parent do
+					local alt = math.random() < 0.5
+					cc.TintColor = alt and Color3.fromRGB(255, 60, 100) or Color3.fromRGB(255, 200, 220)
+					blur.Size = 3 + math.random() * 9
+					for _, e in ipairs(vEdges) do e.BackgroundTransparency = math.random() * 0.5 end
+					if hum and hum.Parent then
+						hum.CameraOffset = Vector3.new((math.random() - 0.5) * 0.5, (math.random() - 0.5) * 0.5, 0)
+					end
+					task.wait(0.07)
+				end
+			end)
+			if hum and hum.Parent then hum.CameraOffset = Vector3.new(0, 0, 0) end
+			if not st.scanning then vignette.Visible = false end
+			TweenService:Create(cc, TweenInfo.new(0.5), { TintColor = C.WHITE, Contrast = 0, Saturation = 0 }):Play()
+			TweenService:Create(blur, TweenInfo.new(0.5), { Size = 0 }):Play()
+			Debris:AddItem(cc, 0.7)
+			Debris:AddItem(blur, 0.7)
+			receiving = false
+		end
+
+		local function hasAny(s, list)
+			for _, w in ipairs(list) do
+				if s:find(w, 1, true) then return true end
+			end
+			return false
+		end
+		local lastReply = 0
+		local function onMessage(sender, text)
+			if not sender or sender == player or type(text) ~= "string" then return end
+			local low = text:lower()
+
+			if low:find(D.PING, 1, true) then
+				markCyber(sender)
+				if cfg.REPLY_TO_SCAN and os.clock() - lastReply > 8 then
+					local dd = distanceTo(sender)
+					if not dd or dd <= cfg.PING_RADIUS then
+						lastReply = os.clock()
+						task.delay(0.5 + math.random() * 1.5, function() chatSay(D.REPLY) end)
+					end
+				end
+				return
+			end
+			if low:find(D.REPLY, 1, true) then markCyber(sender) return end
+			if low:sub(1, 1) ~= "*" then return end
+
+			local isCrash, isHack = hasAny(low, D.CRASH_WORDS), hasAny(low, D.HACK_WORDS)
+			if not (isCrash or isHack) then return end
+			markCyber(sender)
+
+			local targeted = low:find(player.Name:lower(), 1, true) or low:find(player.DisplayName:lower(), 1, true)
+			if not targeted and isCrash then
+				local r = tonumber(low:match("rayon de (%d+)m"))
+				local dd = r and distanceTo(sender)
+				if r and dd and dd <= r then targeted = true end
+			end
+			if not targeted or not cfg.RECEIVE_EFFECTS then return end
+			if isCrash then task.spawn(crashHit, sender) else task.spawn(glitchHit, sender) end
+		end
+
+		if TextChatService.ChatVersion == Enum.ChatVersion.TextChatService then
+			table.insert(conns, TextChatService.MessageReceived:Connect(function(msg)
+				local src = msg.TextSource
+				if src then onMessage(Players:GetPlayerByUserId(src.UserId), msg.Text) end
+			end))
+		else
+			local function watch(p) table.insert(conns, p.Chatted:Connect(function(m) onMessage(p, m) end)) end
+			for _, p in ipairs(Players:GetPlayers()) do watch(p) end
+			table.insert(conns, Players.PlayerAdded:Connect(watch))
+		end
+	end)
+
+	----------------------------------------------------------------
+	-- DÉTECTION SANDEVISTAN (vitesse réelle)
+	----------------------------------------------------------------
+	safe("Détection", function()
+		local function stopSand(plr)
+			local s = det[plr]
+			if not s then return end
+			if s.bb then s.bb:Destroy() end
+			if s.hl then s.hl:Destroy() end
+			s.on, s.bb, s.lbl, s.hl, s.hits = false, nil, nil, nil, 0
+		end
+		fn.stopSand = stopSand
+		local function startSand(plr, head)
+			local s = det[plr]
+			local bb = new("BillboardGui", {
+				Size = UDim2.fromOffset(220, 26), StudsOffset = Vector3.new(0, 4.4, 0), AlwaysOnTop = true, Adornee = head,
+			}, head)
+			local lbl = new("TextLabel", {
+				Size = UDim2.fromScale(1, 1), BackgroundTransparency = 1, Font = Enum.Font.Code, TextSize = 16,
+				TextStrokeTransparency = 0.3,
+			}, bb)
+			local hl = new("Highlight", {
+				FillTransparency = 1, OutlineTransparency = 0, DepthMode = Enum.HighlightDepthMode.AlwaysOnTop, Adornee = plr.Character,
+			}, plr.Character)
+			s.on, s.bb, s.lbl, s.hl = true, bb, lbl, hl
+			markCyber(plr)
+			toast("⚡ SANDEVISTAN DÉTECTÉ : " .. plr.Name, C.CYAN, 4)
+		end
+		local acc = 0
+		table.insert(conns, RunService.Heartbeat:Connect(function(dt)
+			acc += dt
+			if acc < 0.1 then return end
+			acc = 0
+			if not cfg.DETECT_SANDE then
+				for _, p in ipairs(Players:GetPlayers()) do stopSand(p) end
+				return
+			end
+			local needed = math.max(1, math.floor(cfg.HOLD_TIME / 0.1))
+			local hue = (os.clock() * 0.6) % 1
+			for _, plr in ipairs(Players:GetPlayers()) do
+				if plr ~= player then
+					det[plr] = det[plr] or { hits = 0, last = 0, on = false, speed = 0 }
+					local s = det[plr]
+					local char = plr.Character
+					local root = char and char:FindFirstChild("HumanoidRootPart")
+					local hum = char and char:FindFirstChildOfClass("Humanoid")
+					local head = char and char:FindFirstChild("Head")
+					if s.on and (not s.bb or not s.bb.Parent) then stopSand(plr) end
+					if root and hum and head then
+						local dd = distanceTo(plr)
+						local v = root.AssemblyLinearVelocity
+						local speed = Vector3.new(v.X, 0, v.Z).Magnitude
+						local fast = speed >= cfg.SPEED_THRESHOLD and hum.SeatPart == nil and hum.Health > 0
+							and (not dd or dd <= cfg.DETECT_RADIUS)
+						if fast then
+							s.hits += 1
+							s.last, s.speed = os.clock(), speed
+							if s.hits >= needed and not s.on then startSand(plr, head) end
+							if s.on then
+								local c = Color3.fromHSV(hue, 0.9, 1)
+								s.lbl.Text = ("⚡ SANDEVISTAN  %d"):format(math.floor(speed))
+								s.lbl.TextColor3, s.hl.OutlineColor = c, c
+							end
+						else
+							s.hits = 0
+							if s.on and os.clock() - s.last > 1.5 then stopSand(plr) end
+						end
+					elseif s.on then
+						stopSand(plr)
+					end
+				end
+			end
+		end))
+		table.insert(conns, Players.PlayerRemoving:Connect(function(p) stopSand(p) det[p] = nil end))
+	end)
+
+	----------------------------------------------------------------
+	-- PAGE CONFIG
+	----------------------------------------------------------------
+	safe("Config", function()
+		local cl = new("ScrollingFrame", {
+			Size = UDim2.fromOffset(484, WIN_H - 92), BackgroundTransparency = 1, BorderSizePixel = 0, ScrollBarThickness = 3,
+			AutomaticCanvasSize = Enum.AutomaticSize.Y, CanvasSize = UDim2.new(),
+		}, pages.CONFIG)
+		new("UIListLayout", { Padding = UDim.new(0, 4) }, cl)
+		local function cSection(text, color)
+			new("TextLabel", {
+				Size = UDim2.new(1, -8, 0, 22), BackgroundTransparency = 1, Text = "▌" .. text, TextColor3 = color or C.YEL,
+				Font = Enum.Font.Code, TextSize = 13, TextXAlignment = Enum.TextXAlignment.Left,
+			}, cl)
+		end
+		local function cRow(text)
+			local r = new("Frame", { Size = UDim2.new(1, -8, 0, 28), BackgroundTransparency = 1 }, cl)
+			new("TextLabel", {
+				Size = UDim2.new(0.55, 0, 1, 0), BackgroundTransparency = 1, Text = text, TextColor3 = C.WHITE,
+				Font = Enum.Font.Code, TextSize = 13, TextXAlignment = Enum.TextXAlignment.Left,
+			}, r)
+			return r
+		end
+		local function cStyle(c, r)
+			c.Size, c.Position = UDim2.new(0.43, 0, 1, 0), UDim2.new(0.57, 0, 0, 0)
+			c.BackgroundColor3, c.BorderSizePixel, c.TextColor3 = C.PANEL2, 0, C.WHITE
+			c.Font, c.TextSize = Enum.Font.Code, 13
+			c.Parent = r
+			stroke(c, C.CYAN, 1, 0.6)
+		end
+		local function addNumber(text, key, minV, maxV)
+			local box = new("TextBox", { Text = tostring(cfg[key]), ClearTextOnFocus = false })
+			cStyle(box, cRow(text))
+			table.insert(conns, box.FocusLost:Connect(function()
+				local n = tonumber(box.Text)
+				if n then cfg[key] = math.clamp(n, minV, maxV) end
+				box.Text = tostring(cfg[key])
+				if fn.refreshCrashInfo then fn.refreshCrashInfo() end
+			end))
+		end
+		local function addKeybind(text, key)
+			local btn = new("TextButton", { Text = keys[key].Name, AutoButtonColor = false })
+			cStyle(btn, cRow(text))
+			table.insert(conns, btn.MouseButton1Click:Connect(function()
+				st.waitingFor, st.waitingButton = key, btn
+				btn.Text = "Appuie..."
+			end))
+		end
+		local function addToggle(text, getText, onClick)
+			local btn = new("TextButton", { Text = getText(), AutoButtonColor = false })
+			cStyle(btn, cRow(text))
+			table.insert(conns, btn.MouseButton1Click:Connect(function()
+				onClick()
+				btn.Text = getText()
+				if fn.refreshAim then fn.refreshAim() end
+			end))
+		end
+
+		cSection("TOUCHES", C.YEL)
+		addKeybind("Sandevistan", "activate")
+		addKeybind("Scan joueurs", "scan")
+		addKeybind("Aimlock ON/OFF", "aim")
+		addKeybind("Ouvrir le deck", "menu")
+		cSection("SANDEVISTAN", C.CYAN)
+		addNumber("Durée (s)", "DURATION", 1, 60)
+		addNumber("Recharge (s)", "COOLDOWN", 0, 60)
+		addNumber("Vitesse (x)", "SPEED_MULT", 0.5, 10)
+		addNumber("Intervalle fantômes", "GHOST_RATE", 0.03, 0.5)
+		addNumber("Vitesse couleurs", "COLOR_SPEED", 0.1, 10)
+		addToggle("Mode couleur", function() return cfg.COLOR_MODE end, function()
+			cfg.COLOR_MODE = (cfg.COLOR_MODE == "rainbow") and "palette" or "rainbow"
+		end)
+		addToggle("Teinte écran", function() return cfg.SCREEN_TINT and "ON" or "OFF" end, function()
+			cfg.SCREEN_TINT = not cfg.SCREEN_TINT
+		end)
+		cSection("AIMLOCK", C.RED)
+		addToggle("Aimlock", function() return cfg.AIMLOCK and "ON" or "OFF" end, function() cfg.AIMLOCK = not cfg.AIMLOCK end)
+		addToggle("Cible", function() return cfg.AIM_HEAD and "TÊTE" or "TORSE" end, function() cfg.AIM_HEAD = not cfg.AIM_HEAD end)
+		addToggle("Ignorer les murs", function() return cfg.AIM_WALLCHECK and "NON" or "OUI" end, function()
+			cfg.AIM_WALLCHECK = not cfg.AIM_WALLCHECK
+		end)
+		addNumber("Portée (studs)", "AIM_RANGE", 20, 1000)
+		addNumber("Vitesse de lock", "AIM_SPEED", 1, 60)
+		addNumber("Angle max (°)", "AIM_FOV", 5, 180)
+		cSection("SCAN", C.RED)
+		addNumber("Rayon (studs)", "SCAN_RADIUS", 10, 1000)
+		addNumber("Durée (s)", "SCAN_DURATION", 1, 30)
+		addNumber("Recharge (s)", "SCAN_COOLDOWN", 0, 60)
+		cSection("CRASHOUT", C.MAG)
+		addNumber("Rayon zone (studs)", "CRASH_RADIUS", 10, 500)
+		addNumber("Durée effet (s)", "CRASH_DURATION", 1, 20)
+		addToggle("Ragdoll si touché", function() return cfg.RAGDOLL and "ON" or "OFF" end, function() cfg.RAGDOLL = not cfg.RAGDOLL end)
+		addNumber("Durée ragdoll (s)", "RAGDOLL_TIME", 1, 15)
+		cSection("DÉTECTION", C.GREEN)
+		addNumber("Seuil Sandevistan", "SPEED_THRESHOLD", 10, 300)
+		addNumber("Durée au-dessus (s)", "HOLD_TIME", 0.1, 3)
+		addNumber("Portée détection", "DETECT_RADIUS", 20, 2000)
+		addNumber("Portée réponse scan", "PING_RADIUS", 20, 1000)
+	end)
+
+	----------------------------------------------------------------
+	-- INPUTS
+	----------------------------------------------------------------
+	table.insert(conns, UIS.InputBegan:Connect(function(input, gameProcessed)
+		if input.UserInputType ~= Enum.UserInputType.Keyboard then return end
+		if st.waitingFor then
+			if input.KeyCode ~= Enum.KeyCode.Escape then keys[st.waitingFor] = input.KeyCode end
+			st.waitingButton.Text = keys[st.waitingFor].Name
+			st.waitingFor, st.waitingButton = nil, nil
+			if fn.refreshKeyInfo then fn.refreshKeyInfo() end
+			return
+		end
+		if UIS:GetFocusedTextBox() then return end
+		if input.KeyCode == keys.menu then frame.Visible = not frame.Visible return end
+		if gameProcessed then return end
+		if input.KeyCode == keys.activate then
+			if fn.startSand then task.spawn(fn.startSand) end
+		elseif input.KeyCode == keys.scan then
+			if fn.startScan then task.spawn(fn.startScan) end
+		elseif input.KeyCode == keys.aim then
+			cfg.AIMLOCK = not cfg.AIMLOCK
+			if fn.refreshAim then fn.refreshAim() end
+			setStatus("Aimlock : " .. (cfg.AIMLOCK and "ON" or "OFF"), cfg.AIMLOCK and C.GREEN or C.RED)
+		end
+	end))
+
+	_G.CyberCleanup = function()
+		resetAll()
+		for _, c in ipairs(conns) do pcall(function() c:Disconnect() end) end
+		if fn.stopSand then
+			for _, p in ipairs(Players:GetPlayers()) do fn.stopSand(p) end
+		end
+		if gui then gui:Destroy() end
+	end
+
+	fn.showTab("SANDE")
+	toast("CYBERDECK en ligne", C.CYAN, 3)
+	print("[CyberDeck v8] chargé : touche M ou bouton logo pour ouvrir/fermer")
+end)
+
+if not ok then
+	warn("[CyberDeck] ERREUR : " .. tostring(err))
+	local pg = game.Players.LocalPlayer:FindFirstChildOfClass("PlayerGui")
+	if pg then
+		local g = Instance.new("ScreenGui", pg)
+		g.DisplayOrder = 9999
+		local l = Instance.new("TextLabel", g)
+		l.Size = UDim2.fromOffset(600, 80)
+		l.Position = UDim2.new(0.5, -300, 0, 20)
+		l.BackgroundColor3 = Color3.new(0, 0, 0)
+		l.TextColor3 = Color3.fromRGB(255, 60, 60)
+		l.TextWrapped = true
+		l.Text = "ERREUR : " .. tostring(err)
+	end
+end
